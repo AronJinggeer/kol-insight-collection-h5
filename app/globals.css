@@ -1,0 +1,67 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: #f4efe6;
+  --foreground: #1f2b25;
+  --card: rgba(255, 252, 246, 0.84);
+  --line: rgba(121, 110, 90, 0.16);
+  --muted: #5d6a62;
+  --accent: #a75a31;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  min-height: 100vh;
+  background:
+    linear-gradient(rgba(121, 110, 90, 0.06) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(121, 110, 90, 0.06) 1px, transparent 1px),
+    radial-gradient(circle at top, rgba(167, 90, 49, 0.12), transparent 35%),
+    #f4efe6;
+  background-size: 32px 32px, 32px 32px, auto, auto;
+  color: var(--foreground);
+  font-family: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+}
+
+h1,
+h2,
+h3,
+.font-display {
+  font-family: "Iowan Old Style", "Palatino Linotype", "Noto Serif SC", "Songti SC", serif;
+  letter-spacing: -0.02em;
+}
+
+::selection {
+  background: rgba(167, 90, 49, 0.16);
+}
+
+.soft-border {
+  border: 1px solid var(--line);
+}
+
+.card-surface {
+  background: var(--card);
+  backdrop-filter: blur(18px);
+}
+
+.text-muted {
+  color: var(--muted);
+}
+
+.field-transition {
+  transition:
+    border-color 160ms ease,
+    background-color 160ms ease,
+    color 160ms ease,
+    box-shadow 160ms ease,
+    transform 160ms ease;
+}
+
+.field-transition:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 4px rgba(167, 90, 49, 0.1);
+}
