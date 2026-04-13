@@ -1,11 +1,12 @@
 "use client";
 
 import { useState } from "react";
-import type { SubmissionRecord } from "@/lib/storage";
+import type { StorageInfo, SubmissionRecord } from "@/lib/storage";
 import { TextInput } from "@/components/ui";
 
 type AdminDashboardProps = {
   submissions: SubmissionRecord[];
+  storageInfo: StorageInfo;
 };
 
 function formatTime(value: string) {
@@ -65,7 +66,10 @@ function getTopItems(values: string[]) {
     .slice(0, 3);
 }
 
-export function AdminDashboard({ submissions }: AdminDashboardProps) {
+export function AdminDashboard({
+  submissions,
+  storageInfo,
+}: AdminDashboardProps) {
   const [keyword, setKeyword] = useState("");
   const [selectedCode, setSelectedCode] = useState("");
   const [selectedFollowerLevel, setSelectedFollowerLevel] = useState("");
@@ -174,7 +178,7 @@ export function AdminDashboard({ submissions }: AdminDashboardProps) {
                 提交数据查看台
               </h1>
               <p className="max-w-2xl text-[15px] leading-7 text-muted">
-                这里可以直接搜索、筛选、导出提交数据。当前版本数据仍保存在本地文件中，适合快速上线和内部收集使用。
+                这里可以直接搜索、筛选、导出提交数据。
               </p>
             </div>
             <div className="grid grid-cols-2 gap-3 sm:min-w-[360px]">
@@ -188,15 +192,23 @@ export function AdminDashboard({ submissions }: AdminDashboardProps) {
               </div>
               <div className="rounded-[24px] border border-line bg-white/70 p-4">
                 <p className="text-xs uppercase tracking-[0.16em] text-muted">
-                  数据文件
+                  存储方式
                 </p>
                 <p className="mt-2 text-sm leading-6 text-ink">
-                  data/submissions.json
+                  {storageInfo.label}
                 </p>
               </div>
             </div>
           </div>
         </section>
+
+        {!storageInfo.persistent ? (
+          <section className="rounded-[24px] border border-[#e8cfae] bg-[#fff4e8] px-5 py-4 text-sm leading-7 text-[#7f5d2f] shadow-card">
+            当前公网环境仍在使用本地文件存储：`{storageInfo.location}`。这种方式在
+            Render 免费实例上不稳定，可能出现“提交成功但后台查不到”的情况。要让后台稳定显示，需要切换到
+            Postgres 数据库。
+          </section>
+        ) : null}
 
         {submissions.length === 0 ? (
           <section className="card-surface soft-border rounded-[28px] p-8 text-center shadow-card">

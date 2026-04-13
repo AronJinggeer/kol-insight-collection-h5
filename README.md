@@ -8,6 +8,7 @@
 - `code` 专属链接识别与透传
 - 前后端基础校验
 - 本地 JSON 数据持久化接口
+- 可切换到 Postgres 数据库存储
 
 ## 技术栈
 
@@ -39,9 +40,11 @@ http://localhost:3000/?code=KOL001
 
 ## 数据落地
 
-提交后数据会写入：
+默认情况下，提交后数据会写入：
 
 `data/submissions.json`
+
+如果部署环境配置了 `DATABASE_URL`，则会自动切换为 Postgres 数据库存储。
 
 同时也可以直接在本地后台页查看：
 
@@ -99,8 +102,21 @@ http://localhost:3000/?code=KOL001
 
 如果你要长期正式收集数据：
 
-- 建议后续把数据改接 Supabase / Postgres / 飞书多维表格
+- 建议在 Render 环境变量里配置 `DATABASE_URL`
+- 最省心的做法是新建一个 Supabase 项目，然后把它提供的 Postgres connection string 填进 Render
 - 或者把 Render 服务升级到支持 Persistent Disk 的付费实例，并把 `DATA_DIR` 改成 `/var/data`
+
+### 推荐做法：接 Postgres
+
+项目现在已经内置了 Postgres 适配层，不需要再改代码逻辑。
+
+你只需要在 Render 里新增一个环境变量：
+
+```bash
+DATABASE_URL=postgres://...
+```
+
+然后重新部署，系统会自动创建 `submissions` 表，并把后续提交写进去。
 
 ## 后续扩展建议
 
