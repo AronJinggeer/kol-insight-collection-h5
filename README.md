@@ -9,6 +9,7 @@
 - 前后端基础校验
 - 本地 JSON 数据持久化接口
 - 可切换到 Postgres 数据库存储
+- 可切换到飞书多维表格存储
 
 ## 技术栈
 
@@ -44,7 +45,14 @@ http://localhost:3000/?code=KOL001
 
 `data/submissions.json`
 
-如果部署环境配置了 `DATABASE_URL`，则会自动切换为 Postgres 数据库存储。
+如果部署环境配置了以下变量，则会自动切换存储方式：
+
+- 配置了 `FEISHU_APP_ID`、`FEISHU_APP_SECRET`、`FEISHU_BITABLE_APP_TOKEN`、`FEISHU_BITABLE_TABLE_ID`
+  则优先使用飞书多维表格
+- 否则如果配置了 `DATABASE_URL`
+  则使用 Postgres
+- 都没有时
+  则使用本地 `data/submissions.json`
 
 同时也可以直接在本地后台页查看：
 
@@ -117,6 +125,33 @@ DATABASE_URL=postgres://...
 ```
 
 然后重新部署，系统会自动创建 `submissions` 表，并把后续提交写进去。
+
+### 也支持接飞书多维表格
+
+项目已经内置飞书写入和读取逻辑，只要在 Render 环境变量里配置下面 4 个值即可：
+
+```bash
+FEISHU_APP_ID=cli_xxx
+FEISHU_APP_SECRET=xxx
+FEISHU_BITABLE_APP_TOKEN=bascnxxx
+FEISHU_BITABLE_TABLE_ID=tblxxx
+```
+
+飞书多维表格建议至少创建这些列，字段名保持一致：
+
+- `id`
+- `code`
+- `submit_time`
+- `nickname`
+- `follower_level`
+- `expertise_text`
+- `tracks_text`
+- `fund_companies_text`
+- `product_names_text`
+- `reasons_text`
+- `raw_payload`
+
+这些列都可以先用文本类型，最省事。
 
 ## 后续扩展建议
 
