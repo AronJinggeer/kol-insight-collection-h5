@@ -6,6 +6,7 @@ import {
   getFeishuAuthMode,
   isFeishuStorageConfigured,
   mapFeishuMatrixRows,
+  refreshFeishuUserAccessToken,
 } from "@/lib/feishu-auth";
 import { productFieldKeys, SubmissionPayload } from "@/lib/form-config";
 import { normalizeSubmission } from "@/lib/validation";
@@ -18,6 +19,7 @@ const DATABASE_URL = process.env.DATABASE_URL;
 const FEISHU_APP_ID = process.env.FEISHU_APP_ID;
 const FEISHU_APP_SECRET = process.env.FEISHU_APP_SECRET;
 const FEISHU_USER_ACCESS_TOKEN = process.env.FEISHU_USER_ACCESS_TOKEN;
+const FEISHU_USER_REFRESH_TOKEN = process.env.FEISHU_USER_REFRESH_TOKEN;
 const FEISHU_BITABLE_APP_TOKEN = process.env.FEISHU_BITABLE_APP_TOKEN;
 const FEISHU_BITABLE_TABLE_ID = process.env.FEISHU_BITABLE_TABLE_ID;
 const FEISHU_OPEN_BASE_URL =
@@ -68,7 +70,15 @@ type FeishuResponse<T> = {
 
 let sqlClient: postgres.Sql | null = null;
 let tableReadyPromise: Promise<void> | null = null;
-let feishuAccessTokenCache: { token: string; expiresAt: number } | null = null;
+let feishuTenantAccessTokenCache: { token: string; expiresAt: number } | null = null;
+let feishuUserAccessTokenCache:
+  | {
+      token: string;
+      refreshToken: string;
+      expiresAt: number;
+      refreshExpiresAt: number;
+    }
+  | null = null;
 
 function buildRecord(payload: SubmissionPayload): SubmissionRecord {
   return {
@@ -89,6 +99,7 @@ function buildRecord(payload: SubmissionPayload): SubmissionRecord {
 function isFeishuConfigured() {
   return isFeishuStorageConfigured({
     userAccessToken: FEISHU_USER_ACCESS_TOKEN,
+    userRefreshToken: FEISHU_USER_REFRESH_TOKEN,
     appId: FEISHU_APP_ID,
     appSecret: FEISHU_APP_SECRET,
     appToken: FEISHU_BITABLE_APP_TOKEN,
@@ -430,10 +441,10 @@ async function getFeishuTenantAccessToken() {
   }
 
   if (
-    feishuAccessTokenCache &&
-    feishuAccessTokenCache.expiresAt > Date.now() + 60 * 1000
+    feishuTenantAccessTokenCache &&
+    feishuTenantAccessTokenCache.expiresAt > Date.now() + 60 * 1000
   ) {
-    return feishuAccessTokenCache.token;
+    return feishuTenantAccessTokenCache.token;
   }
 
   const result = await fetchFeishuTenantAccessToken({
@@ -442,20 +453,55 @@ async function getFeishuTenantAccessToken() {
     openBaseUrl: FEISHU_OPEN_BASE_URL,
   });
 
-  feishuAccessTokenCache = result;
+  feishuTenantAccessTokenCache = result;
 
   return result.token;
+}
+
+async function getFeishuUserAccessToken() {
+  if (
+    feishuUserAccessTokenCache &&
+    feishuUserAccessTokenCache.expiresAt > Date.now() + 60 * 1000
+  ) {
+    return feishuUserAccessTokenCache.token;
+  }
+
+  if (
+    FEISHU_USER_REFRESH_TOKEN &&
+    FEISHU_APP_ID &&
+    FEISHU_APP_SECRET
+  ) {
+    const result = await refreshFeishuUserAccessToken({
+      accessToken:
+        feishuUserAccessTokenCache?.token || FEISHU_USER_ACCESS_TOKEN,
+      refreshToken:
+        feishuUserAccessTokenCache?.refreshToken || FEISHU_USER_REFRESH_TOKEN,
+      appId: FEISHU_APP_ID,
+      appSecret: FEISHU_APP_SECRET,
+      openBaseUrl: FEISHU_OPEN_BASE_URL,
+    });
+
+    feishuUserAccessTokenCache = result;
+    return result.token;
+  }
+
+  if (FEISHU_USER_ACCESS_TOKEN) {
+    return FEISHU_USER_ACCESS_TOKEN;
+  }
+
+  throw new Error("Feishu user auth mode is not configured");
 }
 
 async function getFeishuAccessToken() {
   const mode = getFeishuAuthMode({
     userAccessToken: FEISHU_USER_ACCESS_TOKEN,
+    userRefreshToken: FEISHU_USER_REFRESH_TOKEN,
     appId: FEISHU_APP_ID,
     appSecret: FEISHU_APP_SECRET,
   });
 
-  if (mode === "user" && FEISHU_USER_ACCESS_TOKEN) {
-    return FEISHU_USER_ACCESS_TOKEN;
+  if (mode === "user") {
+    return getFeishuUserAccessToken();
   }
 
   if (mode === "tenant") {
@@ -468,6 +514,7 @@ async function getFeishuAccessToken() {
 async function feishuRequest<T>(
   pathname: string,
   init?: RequestInit,
+  options: { retryOnAuthError?: boolean } = {},
 ): Promise<FeishuResponse<T>> {
   const token = await getFeishuAccessToken();
   const response = await fetch(`${FEISHU_OPEN_BASE_URL}${pathname}`, {
@@ -483,7 +530,30 @@ async function feishuRequest<T>(
   const result = (await response.json()) as FeishuResponse<T>;
 
   if (!response.ok || result.code !== 0) {
-    throw new Error(result.message || result.msg || "Feishu API request failed");
+    const message =
+      result.message || result.msg || "Feishu API request failed";
+    const authMode = getFeishuAuthMode({
+      userAccessToken: FEISHU_USER_ACCESS_TOKEN,
+      userRefreshToken: FEISHU_USER_REFRESH_TOKEN,
+      appId: FEISHU_APP_ID,
+      appSecret: FEISHU_APP_SECRET,
+    });
+    const canRetryWithRefresh =
+      options.retryOnAuthError !== false &&
+      authMode === "user" &&
+      Boolean(FEISHU_USER_REFRESH_TOKEN && FEISHU_APP_ID && FEISHU_APP_SECRET) &&
+      /token\s*expire|access[_\s-]*token|invalid[_\s-]*grant|invalid[_\s-]*access/i.test(
+        message,
+      );
+
+    if (canRetryWithRefresh) {
+      feishuUserAccessTokenCache = null;
+      return feishuRequest<T>(pathname, init, {
+        retryOnAuthError: false,
+      });
+    }
+
+    throw new Error(message);
   }
 
   return result;
@@ -496,6 +566,7 @@ async function getFeishuSubmissions(): Promise<SubmissionRecord[]> {
 
   const authMode = getFeishuAuthMode({
     userAccessToken: FEISHU_USER_ACCESS_TOKEN,
+    userRefreshToken: FEISHU_USER_REFRESH_TOKEN,
     appId: FEISHU_APP_ID,
     appSecret: FEISHU_APP_SECRET,
   });
@@ -585,6 +656,7 @@ async function appendFeishuSubmission(payload: SubmissionPayload) {
   const record = buildRecord(payload);
   const authMode = getFeishuAuthMode({
     userAccessToken: FEISHU_USER_ACCESS_TOKEN,
+    userRefreshToken: FEISHU_USER_REFRESH_TOKEN,
     appId: FEISHU_APP_ID,
     appSecret: FEISHU_APP_SECRET,
   });
@@ -659,6 +731,7 @@ export function getStorageInfo(): StorageInfo {
   if (isFeishuConfigured()) {
     const authMode = getFeishuAuthMode({
       userAccessToken: FEISHU_USER_ACCESS_TOKEN,
+      userRefreshToken: FEISHU_USER_REFRESH_TOKEN,
       appId: FEISHU_APP_ID,
       appSecret: FEISHU_APP_SECRET,
     });
@@ -671,7 +744,7 @@ export function getStorageInfo(): StorageInfo {
           : "飞书多维表格",
       location:
         authMode === "user"
-          ? "FEISHU_USER_ACCESS_TOKEN / FEISHU_BITABLE_APP_TOKEN / FEISHU_BITABLE_TABLE_ID"
+          ? "FEISHU_USER_ACCESS_TOKEN / FEISHU_USER_REFRESH_TOKEN / FEISHU_BITABLE_APP_TOKEN / FEISHU_BITABLE_TABLE_ID"
           : "FEISHU_BITABLE_APP_TOKEN / FEISHU_BITABLE_TABLE_ID",
       persistent: true,
     };

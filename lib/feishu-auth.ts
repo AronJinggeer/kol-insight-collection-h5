@@ -6,6 +6,7 @@ export type FeishuAuthMode = "user" | "tenant";
 
 type FeishuAuthConfig = {
   userAccessToken?: string;
+  userRefreshToken?: string;
   appId?: string;
   appSecret?: string;
 };
@@ -23,9 +24,35 @@ type TenantTokenResponse = {
   expire?: number;
 };
 
+type UserAccessTokenPayload = {
+  access_token?: string;
+  expires_in?: number;
+  refresh_token?: string;
+  refresh_expires_in?: number;
+};
+
+type UserAccessTokenResponse = {
+  code?: number;
+  msg?: string;
+  message?: string;
+  data?: UserAccessTokenPayload;
+  access_token?: string;
+  expires_in?: number;
+  refresh_token?: string;
+  refresh_expires_in?: number;
+};
+
 export function getFeishuAuthMode(
   config: FeishuAuthConfig,
 ): FeishuAuthMode | null {
+  if (
+    config.userRefreshToken &&
+    config.appId &&
+    config.appSecret
+  ) {
+    return "user";
+  }
+
   if (config.userAccessToken) {
     return "user";
   }
@@ -84,6 +111,65 @@ export async function fetchFeishuTenantAccessToken({
   return {
     token: result.tenant_access_token,
     expiresAt: Date.now() + (result.expire || 7200) * 1000,
+  };
+}
+
+export async function refreshFeishuUserAccessToken({
+  accessToken,
+  refreshToken,
+  appId,
+  appSecret,
+  openBaseUrl = DEFAULT_FEISHU_OPEN_BASE_URL,
+  fetchImpl = fetch,
+}: {
+  accessToken?: string;
+  refreshToken: string;
+  appId: string;
+  appSecret: string;
+  openBaseUrl?: string;
+  fetchImpl?: FetchLike;
+}) {
+  const authToken = accessToken || refreshToken;
+  const response = await fetchImpl(
+    `${openBaseUrl}/open-apis/authen/v1/refresh_access_token`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${authToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        grant_type: "refresh_token",
+        client_id: appId,
+        client_secret: appSecret,
+        refresh_token: refreshToken,
+      }),
+      cache: "no-store",
+    },
+  );
+
+  const result = (await response.json()) as UserAccessTokenResponse;
+  const payload = result.data || result;
+
+  if (
+    !response.ok ||
+    result.code !== 0 ||
+    !payload.access_token ||
+    !payload.refresh_token
+  ) {
+    throw new Error(
+      result.message ||
+        result.msg ||
+        "Failed to refresh Feishu user_access_token",
+    );
+  }
+
+  return {
+    token: payload.access_token,
+    refreshToken: payload.refresh_token,
+    expiresAt: Date.now() + (payload.expires_in || 7200) * 1000,
+    refreshExpiresAt:
+      Date.now() + (payload.refresh_expires_in || 2591940) * 1000,
   };
 }
 
