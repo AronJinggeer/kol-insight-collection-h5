@@ -74,6 +74,7 @@ let sqlClient: postgres.Sql | null = null;
 let tableReadyPromise: Promise<void> | null = null;
 let feishuAppAccessTokenCache: { token: string; expiresAt: number } | null = null;
 let feishuTenantAccessTokenCache: { token: string; expiresAt: number } | null = null;
+let feishuFallbackError: string | null = null;
 let feishuUserAccessTokenCache:
   | {
       token: string;
@@ -767,6 +768,15 @@ async function appendFeishuSubmission(payload: SubmissionPayload) {
 }
 
 export function getStorageInfo(): StorageInfo {
+  if (feishuFallbackError) {
+    return {
+      mode: "file",
+      label: "本地 JSON 文件（飞书回退）",
+      location: DATA_FILE,
+      persistent: false,
+    };
+  }
+
   if (isFeishuConfigured()) {
     const authMode = getFeishuAuthMode({
       userAccessToken: FEISHU_USER_ACCESS_TOKEN,
@@ -808,7 +818,16 @@ export function getStorageInfo(): StorageInfo {
 
 export async function getSubmissions(): Promise<SubmissionRecord[]> {
   if (isFeishuConfigured()) {
-    return getFeishuSubmissions();
+    try {
+      const submissions = await getFeishuSubmissions();
+      feishuFallbackError = null;
+      return submissions;
+    } catch (error) {
+      feishuFallbackError =
+        error instanceof Error ? error.message : "unknown feishu read error";
+      console.error("feishu read failed, falling back to file storage", error);
+      return getFileSubmissions();
+    }
   }
 
   if (DATABASE_URL) {
@@ -820,7 +839,16 @@ export async function getSubmissions(): Promise<SubmissionRecord[]> {
 
 export async function appendSubmission(payload: SubmissionPayload) {
   if (isFeishuConfigured()) {
-    return appendFeishuSubmission(payload);
+    try {
+      const record = await appendFeishuSubmission(payload);
+      feishuFallbackError = null;
+      return record;
+    } catch (error) {
+      feishuFallbackError =
+        error instanceof Error ? error.message : "unknown feishu write error";
+      console.error("feishu write failed, falling back to file storage", error);
+      return appendFileSubmission(payload);
+    }
   }
 
   if (DATABASE_URL) {
