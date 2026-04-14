@@ -272,9 +272,9 @@ export function FormPage() {
           >
             <div className="space-y-8">
               <FieldShell
-                label="4. 未来 6 到 12 个月，你最看好的 3 个赛道"
+                label={`4. 未来 6 到 12 个月，你最看好的 ${maxSelectionMap.tracks} 个赛道`}
                 required
-                hint="至少选择 1 项，最多选择 3 项"
+                hint={`至少选择 1 项，最多选择 ${maxSelectionMap.tracks} 项`}
                 error={errors.tracks}
               >
                 <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
@@ -312,7 +312,7 @@ export function FormPage() {
               <FieldShell
                 label="5. 你最愿意推荐的基金公司是哪几家"
                 required
-                hint="至少选择 1 家，最多选择 3 家"
+                hint={`至少选择 1 家，最多选择 ${maxSelectionMap.fund_companies} 家`}
                 error={errors.fund_companies}
               >
                 <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">

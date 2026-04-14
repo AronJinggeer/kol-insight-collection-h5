@@ -1,4 +1,5 @@
-import { SubmissionPayload, maxSelectionMap } from "@/lib/form-config";
+import type { SubmissionPayload } from "./form-config";
+import { maxSelectionMap } from "./form-config";
 
 export type FieldErrors = Partial<Record<keyof SubmissionPayload, string>>;
 
@@ -75,7 +76,7 @@ export function validateSubmission(payload: SubmissionPayload): FieldErrors {
   if (payload.tracks.length < 1) {
     errors.tracks = "请至少选择 1 个看好赛道";
   } else if (payload.tracks.length > maxSelectionMap.tracks) {
-    errors.tracks = "最多选择 3 个赛道";
+    errors.tracks = `最多选择 ${maxSelectionMap.tracks} 个赛道`;
   } else if (!requireOtherText(payload.tracks, payload.tracks_other)) {
     errors.tracks_other = "已选择“其他”，请补充说明";
   }
@@ -85,7 +86,7 @@ export function validateSubmission(payload: SubmissionPayload): FieldErrors {
   } else if (
     payload.fund_companies.length > maxSelectionMap.fund_companies
   ) {
-    errors.fund_companies = "最多选择 3 家基金公司";
+    errors.fund_companies = `最多选择 ${maxSelectionMap.fund_companies} 家基金公司`;
   } else if (
     !requireOtherText(payload.fund_companies, payload.fund_companies_other)
   ) {

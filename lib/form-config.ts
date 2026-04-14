@@ -75,8 +75,8 @@ export const reasonOptions = [
 ] as const;
 
 export const maxSelectionMap = {
-  tracks: 3,
-  fund_companies: 3,
+  tracks: 5,
+  fund_companies: 6,
 } as const;
 
 export const productFieldKeys = [
