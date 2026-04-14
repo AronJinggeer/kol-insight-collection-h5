@@ -70,6 +70,11 @@ type FeishuResponse<T> = {
   data?: T;
 };
 
+type FeishuBatchCreateBody = {
+  fields: string[];
+  rows: Array<Array<string | null>>;
+};
+
 let sqlClient: postgres.Sql | null = null;
 let tableReadyPromise: Promise<void> | null = null;
 let feishuAppAccessTokenCache: { token: string; expiresAt: number } | null = null;
@@ -83,6 +88,48 @@ let feishuUserAccessTokenCache:
       refreshExpiresAt: number;
     }
   | null = null;
+
+export function buildFeishuBatchCreateRequest(
+  appToken: string,
+  tableId: string,
+  record: SubmissionRecord,
+) {
+  const body: FeishuBatchCreateBody = {
+    fields: [
+      feishuFieldMap.id,
+      feishuFieldMap.code,
+      feishuFieldMap.submit_time,
+      feishuFieldMap.nickname,
+      feishuFieldMap.follower_level,
+      feishuFieldMap.expertise_text,
+      feishuFieldMap.tracks_text,
+      feishuFieldMap.fund_companies_text,
+      feishuFieldMap.product_names_text,
+      feishuFieldMap.reasons_text,
+      feishuFieldMap.raw_payload,
+    ],
+    rows: [
+      [
+        record.id,
+        record.code,
+        record.submit_time,
+        record.nickname,
+        record.follower_level,
+        record.expertise_text,
+        record.tracks_text,
+        record.fund_companies_text,
+        record.product_names_text || null,
+        record.reasons_text,
+        JSON.stringify(record),
+      ],
+    ],
+  };
+
+  return {
+    pathname: `/open-apis/base/v3/bases/${appToken}/tables/${tableId}/records/batch_create`,
+    body,
+  };
+}
 
 function buildRecord(payload: SubmissionPayload): SubmissionRecord {
   return {
@@ -694,73 +741,17 @@ async function appendFeishuSubmission(payload: SubmissionPayload) {
   }
 
   const record = buildRecord(payload);
-  const authMode = getFeishuAuthMode({
-    userAccessToken: FEISHU_USER_ACCESS_TOKEN,
-    userRefreshToken: FEISHU_USER_REFRESH_TOKEN,
-    appId: FEISHU_APP_ID,
-    appSecret: FEISHU_APP_SECRET,
-  });
-
-  if (authMode === "user") {
-    await feishuRequest(
-      `/open-apis/base/v3/bases/${FEISHU_BITABLE_APP_TOKEN}/tables/${FEISHU_BITABLE_TABLE_ID}/records/batch_create`,
-      {
-        method: "POST",
-        body: JSON.stringify({
-          fields: [
-            feishuFieldMap.id,
-            feishuFieldMap.code,
-            feishuFieldMap.submit_time,
-            feishuFieldMap.nickname,
-            feishuFieldMap.follower_level,
-            feishuFieldMap.expertise_text,
-            feishuFieldMap.tracks_text,
-            feishuFieldMap.fund_companies_text,
-            feishuFieldMap.product_names_text,
-            feishuFieldMap.reasons_text,
-            feishuFieldMap.raw_payload,
-          ],
-          rows: [
-            [
-              record.id,
-              record.code,
-              record.submit_time,
-              record.nickname,
-              record.follower_level,
-              record.expertise_text,
-              record.tracks_text,
-              record.fund_companies_text,
-              record.product_names_text,
-              record.reasons_text,
-              JSON.stringify(record),
-            ],
-          ],
-        }),
-      },
-    );
-
-    return record;
-  }
+  const request = buildFeishuBatchCreateRequest(
+    FEISHU_BITABLE_APP_TOKEN,
+    FEISHU_BITABLE_TABLE_ID,
+    record,
+  );
 
   await feishuRequest(
-    `/open-apis/bitable/v1/apps/${FEISHU_BITABLE_APP_TOKEN}/tables/${FEISHU_BITABLE_TABLE_ID}/records`,
+    request.pathname,
     {
       method: "POST",
-      body: JSON.stringify({
-        fields: {
-          [feishuFieldMap.id]: record.id,
-          [feishuFieldMap.code]: record.code,
-          [feishuFieldMap.submit_time]: record.submit_time,
-          [feishuFieldMap.nickname]: record.nickname,
-          [feishuFieldMap.follower_level]: record.follower_level,
-          [feishuFieldMap.expertise_text]: record.expertise_text,
-          [feishuFieldMap.tracks_text]: record.tracks_text,
-          [feishuFieldMap.fund_companies_text]: record.fund_companies_text,
-          [feishuFieldMap.product_names_text]: record.product_names_text,
-          [feishuFieldMap.reasons_text]: record.reasons_text,
-          [feishuFieldMap.raw_payload]: JSON.stringify(record),
-        },
-      }),
+      body: JSON.stringify(request.body),
     },
   );
 
