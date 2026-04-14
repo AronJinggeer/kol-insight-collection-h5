@@ -837,8 +837,8 @@ export async function appendSubmission(payload: SubmissionPayload) {
     } catch (error) {
       feishuFallbackError =
         error instanceof Error ? error.message : "unknown feishu write error";
-      console.error("feishu write failed, falling back to file storage", error);
-      return appendFileSubmission(payload);
+      console.error("feishu write failed", error);
+      throw error;
     }
   }
 
