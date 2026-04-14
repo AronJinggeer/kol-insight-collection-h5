@@ -5,6 +5,7 @@ import {
   fetchFeishuAppAccessToken,
   fetchFeishuTenantAccessToken,
   getFeishuAuthMode,
+  getFeishuUserTokenStrategy,
   isFeishuStorageConfigured,
   mapFeishuMatrixRows,
   refreshFeishuUserAccessToken,
@@ -482,12 +483,16 @@ async function getFeishuAppAccessToken() {
   return result.token;
 }
 
-async function getFeishuUserAccessToken() {
+async function getFeishuUserAccessToken(options: { forceRefresh?: boolean } = {}) {
   if (
     feishuUserAccessTokenCache &&
     feishuUserAccessTokenCache.expiresAt > Date.now() + 60 * 1000
   ) {
     return feishuUserAccessTokenCache.token;
+  }
+
+  if (!options.forceRefresh && FEISHU_USER_ACCESS_TOKEN) {
+    return FEISHU_USER_ACCESS_TOKEN;
   }
 
   if (
@@ -509,14 +514,12 @@ async function getFeishuUserAccessToken() {
     return result.token;
   }
 
-  if (FEISHU_USER_ACCESS_TOKEN) {
-    return FEISHU_USER_ACCESS_TOKEN;
-  }
-
   throw new Error("Feishu user auth mode is not configured");
 }
 
-async function getFeishuAccessToken() {
+async function getFeishuAccessToken(
+  options: { forceRefreshUserToken?: boolean } = {},
+) {
   const mode = getFeishuAuthMode({
     userAccessToken: FEISHU_USER_ACCESS_TOKEN,
     userRefreshToken: FEISHU_USER_REFRESH_TOKEN,
@@ -525,7 +528,9 @@ async function getFeishuAccessToken() {
   });
 
   if (mode === "user") {
-    return getFeishuUserAccessToken();
+    return getFeishuUserAccessToken({
+      forceRefresh: options.forceRefreshUserToken,
+    });
   }
 
   if (mode === "tenant") {
@@ -538,9 +543,11 @@ async function getFeishuAccessToken() {
 async function feishuRequest<T>(
   pathname: string,
   init?: RequestInit,
-  options: { retryOnAuthError?: boolean } = {},
+  options: { retryOnAuthError?: boolean; forceRefreshUserToken?: boolean } = {},
 ): Promise<FeishuResponse<T>> {
-  const token = await getFeishuAccessToken();
+  const token = await getFeishuAccessToken({
+    forceRefreshUserToken: options.forceRefreshUserToken,
+  });
   const response = await fetch(`${FEISHU_OPEN_BASE_URL}${pathname}`, {
     ...init,
     headers: {
@@ -562,9 +569,16 @@ async function feishuRequest<T>(
       appId: FEISHU_APP_ID,
       appSecret: FEISHU_APP_SECRET,
     });
+    const userTokenStrategy = getFeishuUserTokenStrategy({
+      userAccessToken: FEISHU_USER_ACCESS_TOKEN,
+      userRefreshToken: FEISHU_USER_REFRESH_TOKEN,
+      appId: FEISHU_APP_ID,
+      appSecret: FEISHU_APP_SECRET,
+    });
     const canRetryWithRefresh =
       options.retryOnAuthError !== false &&
       authMode === "user" &&
+      userTokenStrategy === "accessToken" &&
       Boolean(FEISHU_USER_REFRESH_TOKEN && FEISHU_APP_ID && FEISHU_APP_SECRET) &&
       /token\s*expire|access[_\s-]*token|invalid[_\s-]*grant|invalid[_\s-]*access/i.test(
         message,
@@ -574,6 +588,7 @@ async function feishuRequest<T>(
       feishuUserAccessTokenCache = null;
       return feishuRequest<T>(pathname, init, {
         retryOnAuthError: false,
+        forceRefreshUserToken: true,
       });
     }
 

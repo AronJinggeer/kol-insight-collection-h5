@@ -5,6 +5,7 @@ import {
   fetchFeishuTenantAccessToken,
   refreshFeishuUserAccessToken,
   getFeishuAuthMode,
+  getFeishuUserTokenStrategy,
   isFeishuStorageConfigured,
   mapFeishuMatrixRows,
 } from "../lib/feishu-auth.ts";
@@ -28,6 +29,29 @@ test("treats refreshable user auth as user mode when app credentials are present
       appSecret: "secret",
     }),
     "user",
+  );
+});
+
+test("prefers direct access token before refreshable auth when both are available", () => {
+  assert.equal(
+    getFeishuUserTokenStrategy({
+      userAccessToken: "access-token",
+      userRefreshToken: "refresh-token",
+      appId: "cli_xxx",
+      appSecret: "secret",
+    }),
+    "accessToken",
+  );
+});
+
+test("uses refresh token strategy when direct access token is unavailable", () => {
+  assert.equal(
+    getFeishuUserTokenStrategy({
+      userRefreshToken: "refresh-token",
+      appId: "cli_xxx",
+      appSecret: "secret",
+    }),
+    "refreshToken",
   );
 });
 

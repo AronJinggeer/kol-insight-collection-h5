@@ -3,6 +3,7 @@ const DEFAULT_FEISHU_OPEN_BASE_URL = "https://open.feishu.cn";
 type FetchLike = typeof fetch;
 
 export type FeishuAuthMode = "user" | "tenant";
+export type FeishuUserTokenStrategy = "accessToken" | "refreshToken";
 
 type FeishuAuthConfig = {
   userAccessToken?: string;
@@ -46,20 +47,30 @@ type UserAccessTokenResponse = {
 export function getFeishuAuthMode(
   config: FeishuAuthConfig,
 ): FeishuAuthMode | null {
-  if (
-    config.userRefreshToken &&
-    config.appId &&
-    config.appSecret
-  ) {
-    return "user";
-  }
-
-  if (config.userAccessToken) {
+  if (getFeishuUserTokenStrategy(config)) {
     return "user";
   }
 
   if (config.appId && config.appSecret) {
     return "tenant";
+  }
+
+  return null;
+}
+
+export function getFeishuUserTokenStrategy(
+  config: FeishuAuthConfig,
+): FeishuUserTokenStrategy | null {
+  if (config.userAccessToken) {
+    return "accessToken";
+  }
+
+  if (
+    config.userRefreshToken &&
+    config.appId &&
+    config.appSecret
+  ) {
+    return "refreshToken";
   }
 
   return null;
