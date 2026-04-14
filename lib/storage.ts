@@ -2,6 +2,7 @@ import { promises as fs } from "fs";
 import path from "path";
 import postgres from "postgres";
 import {
+  fetchFeishuAppAccessToken,
   fetchFeishuTenantAccessToken,
   getFeishuAuthMode,
   isFeishuStorageConfigured,
@@ -70,6 +71,7 @@ type FeishuResponse<T> = {
 
 let sqlClient: postgres.Sql | null = null;
 let tableReadyPromise: Promise<void> | null = null;
+let feishuAppAccessTokenCache: { token: string; expiresAt: number } | null = null;
 let feishuTenantAccessTokenCache: { token: string; expiresAt: number } | null = null;
 let feishuUserAccessTokenCache:
   | {
@@ -458,6 +460,28 @@ async function getFeishuTenantAccessToken() {
   return result.token;
 }
 
+async function getFeishuAppAccessToken() {
+  if (!isFeishuConfigured() || !FEISHU_APP_ID || !FEISHU_APP_SECRET) {
+    throw new Error("Feishu app credentials are not fully configured");
+  }
+
+  if (
+    feishuAppAccessTokenCache &&
+    feishuAppAccessTokenCache.expiresAt > Date.now() + 60 * 1000
+  ) {
+    return feishuAppAccessTokenCache.token;
+  }
+
+  const result = await fetchFeishuAppAccessToken({
+    appId: FEISHU_APP_ID,
+    appSecret: FEISHU_APP_SECRET,
+    openBaseUrl: FEISHU_OPEN_BASE_URL,
+  });
+
+  feishuAppAccessTokenCache = result;
+  return result.token;
+}
+
 async function getFeishuUserAccessToken() {
   if (
     feishuUserAccessTokenCache &&
@@ -471,9 +495,9 @@ async function getFeishuUserAccessToken() {
     FEISHU_APP_ID &&
     FEISHU_APP_SECRET
   ) {
+    const appAccessToken = await getFeishuAppAccessToken();
     const result = await refreshFeishuUserAccessToken({
-      accessToken:
-        feishuUserAccessTokenCache?.token || FEISHU_USER_ACCESS_TOKEN,
+      appAccessToken,
       refreshToken:
         feishuUserAccessTokenCache?.refreshToken || FEISHU_USER_REFRESH_TOKEN,
       appId: FEISHU_APP_ID,

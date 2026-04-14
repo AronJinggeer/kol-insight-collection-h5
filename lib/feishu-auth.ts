@@ -20,6 +20,7 @@ type TenantTokenResponse = {
   code?: number;
   msg?: string;
   message?: string;
+  app_access_token?: string;
   tenant_access_token?: string;
   expire?: number;
 };
@@ -114,28 +115,70 @@ export async function fetchFeishuTenantAccessToken({
   };
 }
 
+export async function fetchFeishuAppAccessToken({
+  appId,
+  appSecret,
+  openBaseUrl = DEFAULT_FEISHU_OPEN_BASE_URL,
+  fetchImpl = fetch,
+}: {
+  appId: string;
+  appSecret: string;
+  openBaseUrl?: string;
+  fetchImpl?: FetchLike;
+}) {
+  const response = await fetchImpl(
+    `${openBaseUrl}/open-apis/auth/v3/app_access_token/internal`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        app_id: appId,
+        app_secret: appSecret,
+      }),
+      cache: "no-store",
+    },
+  );
+
+  const result = (await response.json()) as TenantTokenResponse;
+  const token = result.app_access_token || result.tenant_access_token;
+
+  if (!response.ok || result.code !== 0 || !token) {
+    throw new Error(
+      result.message ||
+        result.msg ||
+        "Failed to get Feishu app_access_token",
+    );
+  }
+
+  return {
+    token,
+    expiresAt: Date.now() + (result.expire || 7200) * 1000,
+  };
+}
+
 export async function refreshFeishuUserAccessToken({
-  accessToken,
+  appAccessToken,
   refreshToken,
   appId,
   appSecret,
   openBaseUrl = DEFAULT_FEISHU_OPEN_BASE_URL,
   fetchImpl = fetch,
 }: {
-  accessToken?: string;
+  appAccessToken: string;
   refreshToken: string;
   appId: string;
   appSecret: string;
   openBaseUrl?: string;
   fetchImpl?: FetchLike;
 }) {
-  const authToken = accessToken || refreshToken;
   const response = await fetchImpl(
     `${openBaseUrl}/open-apis/authen/v1/refresh_access_token`,
     {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${authToken}`,
+        Authorization: `Bearer ${appAccessToken}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({

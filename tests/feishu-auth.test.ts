@@ -120,7 +120,7 @@ test("refreshes user access token with the refresh endpoint", async () => {
   let authorizationHeader = "";
 
   const result = await refreshFeishuUserAccessToken({
-    accessToken: "expired-user-token",
+    appAccessToken: "app-access-token",
     refreshToken: "refresh-token",
     appId: "cli_test",
     appSecret: "secret_test",
@@ -157,7 +157,7 @@ test("refreshes user access token with the refresh endpoint", async () => {
     calledUrl,
     "https://open.feishu.cn/open-apis/authen/v1/refresh_access_token",
   );
-  assert.equal(authorizationHeader, "Bearer expired-user-token");
+  assert.equal(authorizationHeader, "Bearer app-access-token");
   assert.match(calledBody, /"grant_type":"refresh_token"/);
   assert.match(calledBody, /"client_id":"cli_test"/);
   assert.match(calledBody, /"client_secret":"secret_test"/);
