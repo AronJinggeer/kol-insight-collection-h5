@@ -47,8 +47,10 @@ http://localhost:3000/?code=KOL001
 
 如果部署环境配置了以下变量，则会自动切换存储方式：
 
+- 配置了 `FEISHU_USER_ACCESS_TOKEN`、`FEISHU_BITABLE_APP_TOKEN`、`FEISHU_BITABLE_TABLE_ID`
+  则优先使用飞书多维表格的用户授权模式
 - 配置了 `FEISHU_APP_ID`、`FEISHU_APP_SECRET`、`FEISHU_BITABLE_APP_TOKEN`、`FEISHU_BITABLE_TABLE_ID`
-  则优先使用飞书多维表格
+  则使用飞书多维表格的应用身份模式
 - 否则如果配置了 `DATABASE_URL`
   则使用 Postgres
 - 都没有时
@@ -128,7 +130,17 @@ DATABASE_URL=postgres://...
 
 ### 也支持接飞书多维表格
 
-项目已经内置飞书写入和读取逻辑，只要在 Render 环境变量里配置下面 4 个值即可：
+项目已经内置飞书写入和读取逻辑，支持两种接法。
+
+方式一：直接使用用户授权 token，最适合快速验证联调：
+
+```bash
+FEISHU_USER_ACCESS_TOKEN=xxx
+FEISHU_BITABLE_APP_TOKEN=bascnxxx
+FEISHU_BITABLE_TABLE_ID=tblxxx
+```
+
+方式二：使用应用身份：
 
 ```bash
 FEISHU_APP_ID=cli_xxx

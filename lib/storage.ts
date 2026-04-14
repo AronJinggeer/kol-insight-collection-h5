@@ -1,6 +1,12 @@
 import { promises as fs } from "fs";
 import path from "path";
 import postgres from "postgres";
+import {
+  fetchFeishuTenantAccessToken,
+  getFeishuAuthMode,
+  isFeishuStorageConfigured,
+  mapFeishuMatrixRows,
+} from "@/lib/feishu-auth";
 import { productFieldKeys, SubmissionPayload } from "@/lib/form-config";
 import { normalizeSubmission } from "@/lib/validation";
 
@@ -11,6 +17,7 @@ const DATABASE_URL = process.env.DATABASE_URL;
 
 const FEISHU_APP_ID = process.env.FEISHU_APP_ID;
 const FEISHU_APP_SECRET = process.env.FEISHU_APP_SECRET;
+const FEISHU_USER_ACCESS_TOKEN = process.env.FEISHU_USER_ACCESS_TOKEN;
 const FEISHU_BITABLE_APP_TOKEN = process.env.FEISHU_BITABLE_APP_TOKEN;
 const FEISHU_BITABLE_TABLE_ID = process.env.FEISHU_BITABLE_TABLE_ID;
 const FEISHU_OPEN_BASE_URL =
@@ -56,8 +63,6 @@ type FeishuResponse<T> = {
   code?: number;
   msg?: string;
   message?: string;
-  tenant_access_token?: string;
-  expire?: number;
   data?: T;
 };
 
@@ -82,12 +87,13 @@ function buildRecord(payload: SubmissionPayload): SubmissionRecord {
 }
 
 function isFeishuConfigured() {
-  return Boolean(
-    FEISHU_APP_ID &&
-      FEISHU_APP_SECRET &&
-      FEISHU_BITABLE_APP_TOKEN &&
-      FEISHU_BITABLE_TABLE_ID,
-  );
+  return isFeishuStorageConfigured({
+    userAccessToken: FEISHU_USER_ACCESS_TOKEN,
+    appId: FEISHU_APP_ID,
+    appSecret: FEISHU_APP_SECRET,
+    appToken: FEISHU_BITABLE_APP_TOKEN,
+    tableId: FEISHU_BITABLE_TABLE_ID,
+  });
 }
 
 function splitTextValues(value: string) {
@@ -157,53 +163,64 @@ function buildFallbackRecord(
   };
 }
 
-function parseFeishuRecord(item: FeishuRecordItem): SubmissionRecord {
-  const fields = item.fields || {};
+function parseStoredFields(
+  fields: Record<string, unknown>,
+  recordId: string,
+): SubmissionRecord {
   const rawPayload = normalizeUnknownText(fields[feishuFieldMap.raw_payload]);
 
   if (rawPayload) {
     try {
       const parsed = JSON.parse(rawPayload) as Partial<SubmissionRecord>;
-      const payload = normalizeSubmission(parsed);
+      const fallback = buildFallbackRecord(fields, recordId);
+      const payload = normalizeSubmission({
+        ...fallback,
+        ...parsed,
+      });
       const rebuilt = buildRecord(payload);
 
       return {
+        ...fallback,
         ...rebuilt,
         id:
           typeof parsed.id === "string" && parsed.id
             ? parsed.id
-            : item.record_id,
+            : fallback.id,
         submit_time:
           typeof parsed.submit_time === "string" && parsed.submit_time
             ? parsed.submit_time
-            : rebuilt.submit_time,
+            : fallback.submit_time,
         expertise_text:
           typeof parsed.expertise_text === "string"
             ? parsed.expertise_text
-            : rebuilt.expertise_text,
+            : fallback.expertise_text,
         tracks_text:
           typeof parsed.tracks_text === "string"
             ? parsed.tracks_text
-            : rebuilt.tracks_text,
+            : fallback.tracks_text,
         fund_companies_text:
           typeof parsed.fund_companies_text === "string"
             ? parsed.fund_companies_text
-            : rebuilt.fund_companies_text,
+            : fallback.fund_companies_text,
         product_names_text:
           typeof parsed.product_names_text === "string"
             ? parsed.product_names_text
-            : rebuilt.product_names_text,
+            : fallback.product_names_text,
         reasons_text:
           typeof parsed.reasons_text === "string"
             ? parsed.reasons_text
-            : rebuilt.reasons_text,
+            : fallback.reasons_text,
       };
     } catch {
-      return buildFallbackRecord(fields, item.record_id);
+      return buildFallbackRecord(fields, recordId);
     }
   }
 
-  return buildFallbackRecord(fields, item.record_id);
+  return buildFallbackRecord(fields, recordId);
+}
+
+function parseFeishuRecord(item: FeishuRecordItem): SubmissionRecord {
+  return parseStoredFields(item.fields || {}, item.record_id);
 }
 
 function getSqlClient() {
@@ -419,44 +436,40 @@ async function getFeishuTenantAccessToken() {
     return feishuAccessTokenCache.token;
   }
 
-  const response = await fetch(
-    `${FEISHU_OPEN_BASE_URL}/open-apis/auth/v3/tenant_access_token/internal`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        app_id: FEISHU_APP_ID,
-        app_secret: FEISHU_APP_SECRET,
-      }),
-      cache: "no-store",
-    },
-  );
+  const result = await fetchFeishuTenantAccessToken({
+    appId: FEISHU_APP_ID,
+    appSecret: FEISHU_APP_SECRET,
+    openBaseUrl: FEISHU_OPEN_BASE_URL,
+  });
 
-  const result = (await response.json()) as FeishuResponse<unknown>;
+  feishuAccessTokenCache = result;
 
-  if (!response.ok || result.code !== 0 || !result.tenant_access_token) {
-    throw new Error(
-      result.message ||
-        result.msg ||
-        "Failed to get Feishu tenant_access_token",
-    );
+  return result.token;
+}
+
+async function getFeishuAccessToken() {
+  const mode = getFeishuAuthMode({
+    userAccessToken: FEISHU_USER_ACCESS_TOKEN,
+    appId: FEISHU_APP_ID,
+    appSecret: FEISHU_APP_SECRET,
+  });
+
+  if (mode === "user" && FEISHU_USER_ACCESS_TOKEN) {
+    return FEISHU_USER_ACCESS_TOKEN;
   }
 
-  feishuAccessTokenCache = {
-    token: result.tenant_access_token,
-    expiresAt: Date.now() + (result.expire || 7200) * 1000,
-  };
+  if (mode === "tenant") {
+    return getFeishuTenantAccessToken();
+  }
 
-  return result.tenant_access_token;
+  throw new Error("Feishu auth mode is not configured");
 }
 
 async function feishuRequest<T>(
   pathname: string,
   init?: RequestInit,
 ): Promise<FeishuResponse<T>> {
-  const token = await getFeishuTenantAccessToken();
+  const token = await getFeishuAccessToken();
   const response = await fetch(`${FEISHU_OPEN_BASE_URL}${pathname}`, {
     ...init,
     headers: {
@@ -479,6 +492,55 @@ async function feishuRequest<T>(
 async function getFeishuSubmissions(): Promise<SubmissionRecord[]> {
   if (!isFeishuConfigured() || !FEISHU_BITABLE_APP_TOKEN || !FEISHU_BITABLE_TABLE_ID) {
     return [];
+  }
+
+  const authMode = getFeishuAuthMode({
+    userAccessToken: FEISHU_USER_ACCESS_TOKEN,
+    appId: FEISHU_APP_ID,
+    appSecret: FEISHU_APP_SECRET,
+  });
+
+  if (authMode === "user") {
+    const rows: SubmissionRecord[] = [];
+    let offset = 0;
+    let hasMore = true;
+
+    while (hasMore) {
+      const query = new URLSearchParams({
+        limit: "200",
+        offset: String(offset),
+      });
+
+      const result = await feishuRequest<{
+        data?: unknown[][];
+        fields?: string[];
+        has_more?: boolean;
+      }>(
+        `/open-apis/base/v3/bases/${FEISHU_BITABLE_APP_TOKEN}/tables/${FEISHU_BITABLE_TABLE_ID}/records?${query.toString()}`,
+        {
+          method: "GET",
+        },
+      );
+
+      const fieldNames = result.data?.fields || [];
+      const matrixRows = result.data?.data || [];
+      const mappedRows = mapFeishuMatrixRows(fieldNames, matrixRows);
+
+      rows.push(
+        ...mappedRows.map((fields, index) =>
+          parseStoredFields(
+            fields,
+            normalizeUnknownText(fields[feishuFieldMap.id]) ||
+              `base-row-${offset + index}`,
+          ),
+        ),
+      );
+
+      hasMore = Boolean(result.data?.has_more);
+      offset += mappedRows.length;
+    }
+
+    return rows.sort((a, b) => b.submit_time.localeCompare(a.submit_time));
   }
 
   const items: FeishuRecordItem[] = [];
@@ -521,6 +583,52 @@ async function appendFeishuSubmission(payload: SubmissionPayload) {
   }
 
   const record = buildRecord(payload);
+  const authMode = getFeishuAuthMode({
+    userAccessToken: FEISHU_USER_ACCESS_TOKEN,
+    appId: FEISHU_APP_ID,
+    appSecret: FEISHU_APP_SECRET,
+  });
+
+  if (authMode === "user") {
+    await feishuRequest(
+      `/open-apis/base/v3/bases/${FEISHU_BITABLE_APP_TOKEN}/tables/${FEISHU_BITABLE_TABLE_ID}/records/batch_create`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          fields: [
+            feishuFieldMap.id,
+            feishuFieldMap.code,
+            feishuFieldMap.submit_time,
+            feishuFieldMap.nickname,
+            feishuFieldMap.follower_level,
+            feishuFieldMap.expertise_text,
+            feishuFieldMap.tracks_text,
+            feishuFieldMap.fund_companies_text,
+            feishuFieldMap.product_names_text,
+            feishuFieldMap.reasons_text,
+            feishuFieldMap.raw_payload,
+          ],
+          rows: [
+            [
+              record.id,
+              record.code,
+              record.submit_time,
+              record.nickname,
+              record.follower_level,
+              record.expertise_text,
+              record.tracks_text,
+              record.fund_companies_text,
+              record.product_names_text,
+              record.reasons_text,
+              JSON.stringify(record),
+            ],
+          ],
+        }),
+      },
+    );
+
+    return record;
+  }
 
   await feishuRequest(
     `/open-apis/bitable/v1/apps/${FEISHU_BITABLE_APP_TOKEN}/tables/${FEISHU_BITABLE_TABLE_ID}/records`,
@@ -549,10 +657,22 @@ async function appendFeishuSubmission(payload: SubmissionPayload) {
 
 export function getStorageInfo(): StorageInfo {
   if (isFeishuConfigured()) {
+    const authMode = getFeishuAuthMode({
+      userAccessToken: FEISHU_USER_ACCESS_TOKEN,
+      appId: FEISHU_APP_ID,
+      appSecret: FEISHU_APP_SECRET,
+    });
+
     return {
       mode: "feishu",
-      label: "飞书多维表格",
-      location: "FEISHU_BITABLE_APP_TOKEN / FEISHU_BITABLE_TABLE_ID",
+      label:
+        authMode === "user"
+          ? "飞书多维表格（用户授权）"
+          : "飞书多维表格",
+      location:
+        authMode === "user"
+          ? "FEISHU_USER_ACCESS_TOKEN / FEISHU_BITABLE_APP_TOKEN / FEISHU_BITABLE_TABLE_ID"
+          : "FEISHU_BITABLE_APP_TOKEN / FEISHU_BITABLE_TABLE_ID",
       persistent: true,
     };
   }
