@@ -3,8 +3,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "未来赛道与产品观点征集",
-  description: "面向财经创作者的轻量观点征集 H5",
+  title: "520 心跳挑战",
+  description: "面向金融社区的 520 轻量互动小游戏 H5",
 };
 
 export default function RootLayout({
