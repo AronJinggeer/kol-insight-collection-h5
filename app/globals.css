@@ -68,6 +68,16 @@ h3,
   box-shadow: 0 0 0 4px rgba(167, 90, 49, 0.1);
 }
 
+.mobile-order-first {
+  order: -1;
+}
+
+@media (min-width: 1024px) {
+  .mobile-order-first {
+    order: 0;
+  }
+}
+
 .heartbeat-shell::before {
   content: "";
   position: absolute;

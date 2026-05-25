@@ -1,11 +1,18 @@
-import { AdminDashboard } from "@/components/admin-dashboard";
-import { getStorageInfo, getSubmissions } from "@/lib/storage";
+import { AdminLogin, SurveyAdmin } from "@/components/survey-admin";
+import { isAdminAuthenticated } from "@/lib/admin-auth";
+import { getProducts, getSurveyResponseBundles } from "@/lib/survey-storage";
 
 export const dynamic = "force-dynamic";
 
 export default async function AdminPage() {
-  const submissions = await getSubmissions();
-  const storageInfo = getStorageInfo();
+  if (!(await isAdminAuthenticated())) {
+    return <AdminLogin />;
+  }
 
-  return <AdminDashboard submissions={submissions} storageInfo={storageInfo} />;
+  const [products, bundles] = await Promise.all([
+    getProducts(),
+    getSurveyResponseBundles(),
+  ]);
+
+  return <SurveyAdmin products={products} bundles={bundles} view="home" />;
 }
