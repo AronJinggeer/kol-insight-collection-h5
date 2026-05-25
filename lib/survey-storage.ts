@@ -28,7 +28,9 @@ const RESPONSES_FILE =
 const DATABASE_URL = process.env.DATABASE_URL;
 const SURVEY_REQUIRE_DATABASE = process.env.SURVEY_REQUIRE_DATABASE === "true";
 const SURVEY_REQUIRE_PERSISTENT_STORAGE =
-  process.env.SURVEY_REQUIRE_PERSISTENT_STORAGE === "true";
+  process.env.SURVEY_REQUIRE_PERSISTENT_STORAGE === "true" ||
+  (process.env.SURVEY_REQUIRE_PERSISTENT_STORAGE !== "false" &&
+    process.env.NODE_ENV === "production");
 const FEISHU_APP_ID = process.env.FEISHU_APP_ID;
 const FEISHU_APP_SECRET = process.env.FEISHU_APP_SECRET;
 const FEISHU_USER_ACCESS_TOKEN = process.env.FEISHU_USER_ACCESS_TOKEN;
