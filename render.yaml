@@ -14,15 +14,17 @@ services:
         value: data
       - key: ADMIN_PASSWORD
         sync: false
-      - key: DATABASE_URL
-        fromDatabase:
-          name: kol-insight-collection-h5-db
-          property: connectionString
-      - key: SURVEY_REQUIRE_DATABASE
+      - key: FEISHU_APP_ID
+        sync: false
+      - key: FEISHU_APP_SECRET
+        sync: false
+      - key: FEISHU_USER_ACCESS_TOKEN
+        sync: false
+      - key: FEISHU_USER_REFRESH_TOKEN
+        sync: false
+      - key: FEISHU_BITABLE_APP_TOKEN
+        sync: false
+      - key: FEISHU_BITABLE_TABLE_ID
+        sync: false
+      - key: SURVEY_REQUIRE_PERSISTENT_STORAGE
         value: "true"
-
-databases:
-  - name: kol-insight-collection-h5-db
-    plan: basic-256mb
-    databaseName: kol_insight_collection_h5
-    user: kol_insight_collection_h5

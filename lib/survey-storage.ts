@@ -1,6 +1,15 @@
 import { promises as fs } from "fs";
 import path from "path";
 import postgres from "postgres";
+import {
+  fetchFeishuAppAccessToken,
+  fetchFeishuTenantAccessToken,
+  getFeishuAuthMode,
+  getFeishuUserTokenStrategy,
+  isFeishuStorageConfigured,
+  mapFeishuMatrixRows,
+  refreshFeishuUserAccessToken,
+} from "@/lib/feishu-auth";
 import type {
   Product,
   KOL,
@@ -18,10 +27,55 @@ const RESPONSES_FILE =
   path.join(DATA_DIR, "survey-responses.json");
 const DATABASE_URL = process.env.DATABASE_URL;
 const SURVEY_REQUIRE_DATABASE = process.env.SURVEY_REQUIRE_DATABASE === "true";
+const SURVEY_REQUIRE_PERSISTENT_STORAGE =
+  process.env.SURVEY_REQUIRE_PERSISTENT_STORAGE === "true";
+const FEISHU_APP_ID = process.env.FEISHU_APP_ID;
+const FEISHU_APP_SECRET = process.env.FEISHU_APP_SECRET;
+const FEISHU_USER_ACCESS_TOKEN = process.env.FEISHU_USER_ACCESS_TOKEN;
+const FEISHU_USER_REFRESH_TOKEN = process.env.FEISHU_USER_REFRESH_TOKEN;
+const FEISHU_BITABLE_APP_TOKEN =
+  process.env.SURVEY_FEISHU_BITABLE_APP_TOKEN ||
+  process.env.FEISHU_BITABLE_APP_TOKEN;
+const FEISHU_BITABLE_TABLE_ID =
+  process.env.SURVEY_FEISHU_BITABLE_TABLE_ID ||
+  process.env.FEISHU_BITABLE_TABLE_ID;
+const FEISHU_OPEN_BASE_URL =
+  process.env.FEISHU_OPEN_BASE_URL || "https://open.feishu.cn";
 
 let sqlClient: postgres.Sql | null = null;
 let surveyTablesReadyPromise: Promise<void> | null = null;
 let surveyFileMigrationPromise: Promise<void> | null = null;
+let feishuAppAccessTokenCache: { token: string; expiresAt: number } | null = null;
+let feishuTenantAccessTokenCache: { token: string; expiresAt: number } | null = null;
+let feishuUserAccessTokenCache:
+  | {
+      token: string;
+      refreshToken: string;
+      expiresAt: number;
+      refreshExpiresAt: number;
+    }
+  | null = null;
+
+type FeishuResponse<T> = {
+  code?: number;
+  msg?: string;
+  message?: string;
+  data?: T;
+};
+
+const feishuFieldMap = {
+  id: "id",
+  code: "code",
+  submitTime: "submit_time",
+  nickname: "nickname",
+  followerLevel: "follower_level",
+  expertiseText: "expertise_text",
+  tracksText: "tracks_text",
+  fundCompaniesText: "fund_companies_text",
+  productNamesText: "product_names_text",
+  reasonsText: "reasons_text",
+  rawPayload: "raw_payload",
+} as const;
 
 async function ensureDataFile(filePath: string, fallback: string) {
   await fs.mkdir(path.dirname(filePath), { recursive: true });
@@ -48,6 +102,307 @@ async function writeJsonFile<T>(filePath: string, value: T) {
 
 function createId(prefix: string) {
   return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function isFeishuConfigured() {
+  return isFeishuStorageConfigured({
+    userAccessToken: FEISHU_USER_ACCESS_TOKEN,
+    userRefreshToken: FEISHU_USER_REFRESH_TOKEN,
+    appId: FEISHU_APP_ID,
+    appSecret: FEISHU_APP_SECRET,
+    appToken: FEISHU_BITABLE_APP_TOKEN,
+    tableId: FEISHU_BITABLE_TABLE_ID,
+  });
+}
+
+async function getFeishuAppAccessToken() {
+  if (!FEISHU_APP_ID || !FEISHU_APP_SECRET) {
+    throw new Error("Feishu app credentials are not configured");
+  }
+
+  if (
+    feishuAppAccessTokenCache &&
+    feishuAppAccessTokenCache.expiresAt > Date.now() + 60 * 1000
+  ) {
+    return feishuAppAccessTokenCache.token;
+  }
+
+  feishuAppAccessTokenCache = await fetchFeishuAppAccessToken({
+    appId: FEISHU_APP_ID,
+    appSecret: FEISHU_APP_SECRET,
+    openBaseUrl: FEISHU_OPEN_BASE_URL,
+  });
+  return feishuAppAccessTokenCache.token;
+}
+
+async function getFeishuTenantAccessToken() {
+  if (!FEISHU_APP_ID || !FEISHU_APP_SECRET) {
+    throw new Error("Feishu tenant credentials are not configured");
+  }
+
+  if (
+    feishuTenantAccessTokenCache &&
+    feishuTenantAccessTokenCache.expiresAt > Date.now() + 60 * 1000
+  ) {
+    return feishuTenantAccessTokenCache.token;
+  }
+
+  feishuTenantAccessTokenCache = await fetchFeishuTenantAccessToken({
+    appId: FEISHU_APP_ID,
+    appSecret: FEISHU_APP_SECRET,
+    openBaseUrl: FEISHU_OPEN_BASE_URL,
+  });
+  return feishuTenantAccessTokenCache.token;
+}
+
+async function getFeishuUserAccessToken(options: { forceRefresh?: boolean } = {}) {
+  if (
+    feishuUserAccessTokenCache &&
+    feishuUserAccessTokenCache.expiresAt > Date.now() + 60 * 1000
+  ) {
+    return feishuUserAccessTokenCache.token;
+  }
+
+  if (!options.forceRefresh && FEISHU_USER_ACCESS_TOKEN) {
+    return FEISHU_USER_ACCESS_TOKEN;
+  }
+
+  if (FEISHU_USER_REFRESH_TOKEN && FEISHU_APP_ID && FEISHU_APP_SECRET) {
+    const appAccessToken = await getFeishuAppAccessToken();
+    feishuUserAccessTokenCache = await refreshFeishuUserAccessToken({
+      appAccessToken,
+      refreshToken:
+        feishuUserAccessTokenCache?.refreshToken || FEISHU_USER_REFRESH_TOKEN,
+      appId: FEISHU_APP_ID,
+      appSecret: FEISHU_APP_SECRET,
+      openBaseUrl: FEISHU_OPEN_BASE_URL,
+    });
+    return feishuUserAccessTokenCache.token;
+  }
+
+  throw new Error("Feishu user auth mode is not configured");
+}
+
+async function getFeishuAccessToken(
+  options: { forceRefreshUserToken?: boolean } = {},
+) {
+  const mode = getFeishuAuthMode({
+    userAccessToken: FEISHU_USER_ACCESS_TOKEN,
+    userRefreshToken: FEISHU_USER_REFRESH_TOKEN,
+    appId: FEISHU_APP_ID,
+    appSecret: FEISHU_APP_SECRET,
+  });
+
+  if (mode === "user") {
+    return getFeishuUserAccessToken({
+      forceRefresh: options.forceRefreshUserToken,
+    });
+  }
+
+  if (mode === "tenant") {
+    return getFeishuTenantAccessToken();
+  }
+
+  throw new Error("Feishu auth mode is not configured");
+}
+
+async function feishuRequest<T>(
+  pathname: string,
+  init?: RequestInit,
+  options: { retryOnAuthError?: boolean; forceRefreshUserToken?: boolean } = {},
+): Promise<FeishuResponse<T>> {
+  const token = await getFeishuAccessToken({
+    forceRefreshUserToken: options.forceRefreshUserToken,
+  });
+  const response = await fetch(`${FEISHU_OPEN_BASE_URL}${pathname}`, {
+    ...init,
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+      ...(init?.headers || {}),
+    },
+    cache: "no-store",
+  });
+
+  const result = (await response.json()) as FeishuResponse<T>;
+
+  if (!response.ok || result.code !== 0) {
+    const message = result.message || result.msg || "Feishu API request failed";
+    const authMode = getFeishuAuthMode({
+      userAccessToken: FEISHU_USER_ACCESS_TOKEN,
+      userRefreshToken: FEISHU_USER_REFRESH_TOKEN,
+      appId: FEISHU_APP_ID,
+      appSecret: FEISHU_APP_SECRET,
+    });
+    const userTokenStrategy = getFeishuUserTokenStrategy({
+      userAccessToken: FEISHU_USER_ACCESS_TOKEN,
+      userRefreshToken: FEISHU_USER_REFRESH_TOKEN,
+      appId: FEISHU_APP_ID,
+      appSecret: FEISHU_APP_SECRET,
+    });
+    const canRetryWithRefresh =
+      options.retryOnAuthError !== false &&
+      authMode === "user" &&
+      userTokenStrategy === "accessToken" &&
+      Boolean(FEISHU_USER_REFRESH_TOKEN && FEISHU_APP_ID && FEISHU_APP_SECRET) &&
+      /token\s*expire|access[_\s-]*token|invalid[_\s-]*grant|invalid[_\s-]*access/i.test(
+        message,
+      );
+
+    if (canRetryWithRefresh) {
+      feishuUserAccessTokenCache = null;
+      return feishuRequest<T>(pathname, init, {
+        retryOnAuthError: false,
+        forceRefreshUserToken: true,
+      });
+    }
+
+    throw new Error(message);
+  }
+
+  return result;
+}
+
+function serializeSurveyBundle(bundle: SurveyResponseBundle) {
+  return JSON.stringify({
+    surveySchemaVersion: 1,
+    bundle,
+  });
+}
+
+function parseSurveyBundleFromRawPayload(rawPayload: unknown) {
+  if (typeof rawPayload !== "string" || !rawPayload.trim()) return null;
+  try {
+    const parsed = JSON.parse(rawPayload) as {
+      surveySchemaVersion?: number;
+      bundle?: SurveyResponseBundle;
+    };
+    if (parsed.surveySchemaVersion !== 1 || !parsed.bundle) return null;
+    return parsed.bundle;
+  } catch {
+    return null;
+  }
+}
+
+function buildFeishuSurveyBatchCreateBody(bundle: SurveyResponseBundle) {
+  return {
+    fields: [
+      feishuFieldMap.id,
+      feishuFieldMap.code,
+      feishuFieldMap.submitTime,
+      feishuFieldMap.nickname,
+      feishuFieldMap.followerLevel,
+      feishuFieldMap.expertiseText,
+      feishuFieldMap.tracksText,
+      feishuFieldMap.fundCompaniesText,
+      feishuFieldMap.productNamesText,
+      feishuFieldMap.reasonsText,
+      feishuFieldMap.rawPayload,
+    ],
+    rows: [
+      [
+        bundle.response.id,
+        "survey",
+        bundle.response.submittedAt,
+        bundle.kol.name,
+        bundle.kol.followerRange,
+        bundle.kol.contentDirections.join("，"),
+        bundle.kol.platforms.join("，"),
+        "5-6月行情调研",
+        bundle.items.map((item) => item.productId).join("，"),
+        bundle.items
+          .map((item) => item.personalReason)
+          .filter(Boolean)
+          .join("，"),
+        serializeSurveyBundle(bundle),
+      ],
+    ],
+  };
+}
+
+async function appendFeishuSurveyBundle(bundle: SurveyResponseBundle) {
+  if (!FEISHU_BITABLE_APP_TOKEN || !FEISHU_BITABLE_TABLE_ID) {
+    throw new Error("Feishu Bitable env vars are not fully configured");
+  }
+
+  await feishuRequest(
+    `/open-apis/base/v3/bases/${FEISHU_BITABLE_APP_TOKEN}/tables/${FEISHU_BITABLE_TABLE_ID}/records/batch_create`,
+    {
+      method: "POST",
+      body: JSON.stringify(buildFeishuSurveyBatchCreateBody(bundle)),
+    },
+  );
+}
+
+async function getFeishuSurveyBundles() {
+  if (!FEISHU_BITABLE_APP_TOKEN || !FEISHU_BITABLE_TABLE_ID) {
+    return [];
+  }
+
+  const authMode = getFeishuAuthMode({
+    userAccessToken: FEISHU_USER_ACCESS_TOKEN,
+    userRefreshToken: FEISHU_USER_REFRESH_TOKEN,
+    appId: FEISHU_APP_ID,
+    appSecret: FEISHU_APP_SECRET,
+  });
+
+  const bundles: SurveyResponseBundle[] = [];
+  if (authMode === "user") {
+    let offset = 0;
+    let hasMore = true;
+    while (hasMore) {
+      const query = new URLSearchParams({
+        limit: "200",
+        offset: String(offset),
+      });
+      const result = await feishuRequest<{
+        data?: unknown[][];
+        fields?: string[];
+        has_more?: boolean;
+      }>(
+        `/open-apis/base/v3/bases/${FEISHU_BITABLE_APP_TOKEN}/tables/${FEISHU_BITABLE_TABLE_ID}/records?${query.toString()}`,
+        { method: "GET" },
+      );
+      const fieldNames = result.data?.fields || [];
+      const matrixRows = result.data?.data || [];
+      const mappedRows = mapFeishuMatrixRows(fieldNames, matrixRows);
+      bundles.push(
+        ...mappedRows
+          .map((row) => parseSurveyBundleFromRawPayload(row[feishuFieldMap.rawPayload]))
+          .filter((bundle): bundle is SurveyResponseBundle => Boolean(bundle)),
+      );
+      hasMore = Boolean(result.data?.has_more);
+      offset += mappedRows.length;
+    }
+  } else {
+    let pageToken = "";
+    let hasMore = true;
+    while (hasMore) {
+      const query = new URLSearchParams({ page_size: "500" });
+      if (pageToken) query.set("page_token", pageToken);
+      const result = await feishuRequest<{
+        has_more?: boolean;
+        page_token?: string;
+        items?: Array<{ fields?: Record<string, unknown> }>;
+      }>(
+        `/open-apis/bitable/v1/apps/${FEISHU_BITABLE_APP_TOKEN}/tables/${FEISHU_BITABLE_TABLE_ID}/records?${query.toString()}`,
+        { method: "GET" },
+      );
+      bundles.push(
+        ...(result.data?.items || [])
+          .map((item) =>
+            parseSurveyBundleFromRawPayload(item.fields?.[feishuFieldMap.rawPayload]),
+          )
+          .filter((bundle): bundle is SurveyResponseBundle => Boolean(bundle)),
+      );
+      hasMore = Boolean(result.data?.has_more);
+      pageToken = result.data?.page_token || "";
+    }
+  }
+
+  return bundles.sort((a, b) =>
+    b.response.submittedAt.localeCompare(a.response.submittedAt),
+  );
 }
 
 function getSqlClient() {
@@ -250,6 +605,10 @@ export async function saveProducts(products: Product[]) {
 }
 
 export async function getSurveyResponseBundles() {
+  if (isFeishuConfigured()) {
+    return getFeishuSurveyBundles();
+  }
+
   const sql = await ensureSurveyTables();
   if (sql) {
     await migrateFileBundlesToPostgresIfNeeded(sql);
@@ -463,11 +822,20 @@ export async function appendSurveyResponse(payload: SurveySubmitPayload) {
     })),
   };
 
+  if (isFeishuConfigured()) {
+    await appendFeishuSurveyBundle(bundle);
+    return bundle;
+  }
+
   const sql = await ensureSurveyTables();
   if (sql) {
     await migrateFileBundlesToPostgresIfNeeded(sql);
     await insertSurveyBundle(sql, bundle);
     return bundle;
+  }
+
+  if (SURVEY_REQUIRE_PERSISTENT_STORAGE) {
+    throw new Error("请先配置飞书多维表格存储后再开放提交");
   }
 
   const bundles = await getSurveyResponseBundles();
@@ -476,11 +844,29 @@ export async function appendSurveyResponse(payload: SurveySubmitPayload) {
 }
 
 export function getSurveyStorageInfo() {
-  return DATABASE_URL
-    ? { mode: "postgres", persistent: true, location: "DATABASE_URL" }
-    : {
-        mode: "file",
-        persistent: false,
-        location: RESPONSES_FILE,
-      };
+  if (isFeishuConfigured()) {
+    return {
+      mode: "feishu",
+      persistent: true,
+      location: "FEISHU_BITABLE_APP_TOKEN / FEISHU_BITABLE_TABLE_ID",
+    };
+  }
+
+  if (DATABASE_URL) {
+    return { mode: "postgres", persistent: true, location: "DATABASE_URL" };
+  }
+
+  if (SURVEY_REQUIRE_PERSISTENT_STORAGE) {
+    return {
+      mode: "missing",
+      persistent: false,
+      location: "missing FEISHU_* or DATABASE_URL env vars",
+    };
+  }
+
+  return {
+    mode: "file",
+    persistent: false,
+    location: RESPONSES_FILE,
+  };
 }
