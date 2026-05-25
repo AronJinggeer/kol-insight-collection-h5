@@ -22,6 +22,7 @@ export type ProductStat = {
     kol: KOL;
     item: SurveyResponseItem;
     submittedAt: string;
+    overallRemark: string;
   }>;
   totalSelections: number;
   strongCount: number;
@@ -100,6 +101,7 @@ export function buildSurveyAnalytics(
           kol: bundle.kol,
           item,
           submittedAt: bundle.response.submittedAt,
+          overallRemark: bundle.response.overallRemark,
         })),
     );
     const items = selections.map((selection) => selection.item);
@@ -208,12 +210,13 @@ function aggregateBy(
 ) {
   const groups = new Map<string, ProductStat[]>();
   for (const stat of productStats) {
-    const name = stat.product[key] || "未填写";
+    const name = stat.product[key].trim();
+    if (!name) continue;
     groups.set(name, [...(groups.get(name) ?? []), stat]);
   }
 
   return Array.from(groups.entries()).map(([name, stats]) => {
-    const productTotal = products.filter((product) => (product[key] || "未填写") === name).length;
+    const productTotal = products.filter((product) => product[key].trim() === name).length;
     const selectedProductCount = stats.filter((stat) => stat.totalSelections > 0).length;
     const totalSelections = stats.reduce((sum, stat) => sum + stat.totalSelections, 0);
     const interestScore = stats.reduce((sum, stat) => sum + stat.interestScore, 0);

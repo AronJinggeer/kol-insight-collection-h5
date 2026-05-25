@@ -61,22 +61,6 @@ export const institutionFilterOptions = [
   "农银",
 ];
 
-export const trackFilterOptions = [
-  "黄金",
-  "通信设备",
-  "半导体",
-  "机器人",
-  "创新药",
-  "红利",
-  "港股",
-  "纳斯达克",
-  "低波",
-  "AI",
-  "科技",
-  "其他",
-  "未填写",
-];
-
 export const interestLevelLabels: Record<InterestLevel, string> = {
   strong: "强意向，愿意重点了解",
   medium: "中意向，可以考虑",
@@ -117,3 +101,15 @@ export const rankTypeScore: Record<RankType, number> = {
 };
 
 export const topRankTypes: RankType[] = ["top1", "top2", "top3", "top4", "top5"];
+export const surveySelectionLimits = {
+  min: 3,
+  max: 8,
+} as const;
+
+export function deriveInterestLevelFromRank(rankType: RankType): InterestLevel {
+  if (rankType === "top1" || rankType === "top2") return "strong";
+  if (rankType === "top3" || rankType === "top4" || rankType === "top5") {
+    return "medium";
+  }
+  return "weak";
+}

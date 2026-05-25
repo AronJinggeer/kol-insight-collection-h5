@@ -5,23 +5,17 @@ import type { ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import {
   contentDirectionOptions,
-  contentFormatLabels,
   followerRangeOptions,
   institutionFilterOptions,
-  interestLevelLabels,
   platformOptions,
   rankTypeLabels,
-  trackFilterOptions,
+  surveySelectionLimits,
 } from "@/lib/survey-options";
 import {
   displayProductDescription,
-  formatContentFormats,
-  formatInterestLevel,
   formatRankType,
 } from "@/lib/survey-stats";
 import type {
-  ContentFormat,
-  InterestLevel,
   Product,
   RankType,
   SurveySubmitPayload,
@@ -31,17 +25,14 @@ type SurveyStep = "info" | "products" | "review" | "success";
 
 type DraftItem = {
   productId: string;
-  interestLevel: InterestLevel | "";
   rankType: RankType;
-  personalReason: string;
-  contentFormats: ContentFormat[];
-  remark: string;
 };
 
 type Draft = {
   kol: SurveySubmitPayload["kol"];
   items: DraftItem[];
   confirmations: SurveySubmitPayload["confirmations"];
+  overallRemark: string;
   submittedKolId: string;
 };
 
@@ -58,6 +49,7 @@ const emptyDraft: Draft = {
     confirmedCompliance: false,
     confirmedFinalCommunication: false,
   },
+  overallRemark: "",
   submittedKolId: "",
 };
 
@@ -118,6 +110,18 @@ function SelectField({
   );
 }
 
+function displayProductTrack(track: string) {
+  const value = track.trim();
+  if (!value || value === "未填写" || value === "其他") return "";
+  return value;
+}
+
+function formatProductMeta(product: Product) {
+  return [product.institution, displayProductTrack(product.track), product.productCode]
+    .filter(Boolean)
+    .join(" / ");
+}
+
 function BaseLayout({
   children,
   title = "5-6月行情调研",
@@ -145,22 +149,40 @@ function BaseLayout({
 export function SurveyShell({ step }: { step: SurveyStep }) {
   const router = useRouter();
   const [draft, setDraft] = useState<Draft>(emptyDraft);
+  const [draftReady, setDraftReady] = useState(false);
   const [products, setProducts] = useState<Product[]>([]);
   const [message, setMessage] = useState("");
 
   useEffect(() => {
     const stored = window.localStorage.getItem("survey-5-6-draft");
     if (stored) {
-      setDraft(JSON.parse(stored) as Draft);
+      const parsed = JSON.parse(stored) as Partial<Draft>;
+      setDraft({
+        ...emptyDraft,
+        ...parsed,
+        kol: { ...emptyDraft.kol, ...parsed.kol },
+        confirmations: {
+          ...emptyDraft.confirmations,
+          ...parsed.confirmations,
+        },
+        items: (parsed.items ?? []).map((item) => ({
+          productId: item.productId,
+          rankType: item.rankType ?? "backup",
+        })),
+        overallRemark: parsed.overallRemark ?? "",
+        submittedKolId: parsed.submittedKolId ?? "",
+      });
     }
+    setDraftReady(true);
     fetch("/api/survey/products")
       .then((response) => response.json())
       .then((data) => setProducts(data.products ?? []));
   }, []);
 
   useEffect(() => {
+    if (!draftReady) return;
     window.localStorage.setItem("survey-5-6-draft", JSON.stringify(draft));
-  }, [draft]);
+  }, [draft, draftReady]);
 
   const productById = useMemo(
     () => new Map(products.map((product) => [product.id, product])),
@@ -341,8 +363,22 @@ function ProductsStep({
   const [institution, setInstitution] = useState("全部机构");
   const [track, setTrack] = useState("全部赛道");
   const [status, setStatus] = useState("全部产品");
+  const canContinue =
+    draft.items.length >= surveySelectionLimits.min &&
+    draft.items.length <= surveySelectionLimits.max;
   const selectedIds = draft.items.map((item) => item.productId);
   const selectedProducts = products.filter((product) => selectedIds.includes(product.id));
+  const trackOptions = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          products
+            .map((product) => product.track.trim())
+            .filter((value) => value && value !== "未填写" && value !== "其他"),
+        ),
+      ),
+    [products],
+  );
   const filteredProducts = products.filter((product) => {
     const matchedKeyword =
       !keyword ||
@@ -363,8 +399,8 @@ function ProductsStep({
 
   function toggleProduct(productId: string) {
     const exists = draft.items.some((item) => item.productId === productId);
-    if (!exists && draft.items.length >= 10) {
-      setMessage("最多选择 10 个产品，建议只保留你真正愿意进一步了解的方向。");
+    if (!exists && draft.items.length >= surveySelectionLimits.max) {
+      setMessage("最多选择 8 个产品，建议只保留你真正愿意进一步了解的方向。");
       return;
     }
     setDraft({
@@ -375,25 +411,56 @@ function ProductsStep({
             ...draft.items,
             {
               productId,
-              interestLevel: "",
               rankType: "backup",
-              personalReason: "",
-              contentFormats: [],
-              remark: "",
             },
           ],
     });
+  }
+
+  function continueToReview() {
+    if (draft.items.length < surveySelectionLimits.min) {
+      setMessage("请至少选择 3 个你相对看好的产品，方便我们做后续统计。");
+      return;
+    }
+    if (draft.items.length > surveySelectionLimits.max) {
+      setMessage("最多选择 8 个产品，建议只保留你真正愿意进一步了解的方向。");
+      return;
+    }
+    const rankedDraft: Draft = {
+      ...draft,
+      items: draft.items.map((item, index) => ({
+        ...item,
+        rankType:
+          index === 0 ? "top1" :
+          index === 1 ? "top2" :
+          index === 2 ? "top3" :
+          index === 3 ? "top4" :
+          index === 4 ? "top5" :
+          "backup",
+      })),
+    };
+    setDraft(rankedDraft);
+    window.localStorage.setItem("survey-5-6-draft", JSON.stringify(rankedDraft));
+    go("/survey/review");
   }
 
   return (
     <BaseLayout title="选择你近期更看好的产品">
       <section className="rounded-lg border border-[#F0DFAD] bg-white p-4 shadow-sm sm:p-5">
         <p className="text-sm leading-7 text-[#4B5563]">
-          请从下面的产品池中，选择你认为更适合自己内容方向、粉丝受众和近期市场环境的产品。建议选择 3 到 10 个产品。如果你对某个产品感兴趣，但还需要更多资料，也可以先加入意向。
+          请从下面的产品池中，选择你认为更适合自己内容方向、粉丝受众和近期市场环境的产品。建议选择 3 到 8 个产品。如果你对某个产品感兴趣，但还需要更多资料，也可以先加入意向。
         </p>
         <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg bg-[#FFF7D6] px-4 py-3 text-sm text-[#5F4A12]">
-          <span>已选择 {draft.items.length} / 10</span>
+          <span>已选择 {draft.items.length} / {surveySelectionLimits.max}</span>
           <span>至少选择 3 个产品后可进入下一步</span>
+          <button
+            type="button"
+            disabled={!canContinue}
+            onClick={continueToReview}
+            className="w-full rounded-lg bg-[#1F2937] px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40 sm:w-auto"
+          >
+            下一步，排序前 5 名
+          </button>
         </div>
         <div className="mt-5 grid gap-3 lg:grid-cols-[2fr_1fr_1fr_1fr]">
           <input
@@ -403,7 +470,7 @@ function ProductsStep({
             className="h-12 rounded-lg border border-[#E9DDB8] px-3 text-sm"
           />
           <SelectField value={institution} onChange={setInstitution} options={["全部机构", ...institutionFilterOptions]} />
-          <SelectField value={track} onChange={setTrack} options={["全部赛道", ...trackFilterOptions]} />
+          <SelectField value={track} onChange={setTrack} options={["全部赛道", ...trackOptions]} />
           <SelectField value={status} onChange={setStatus} options={["全部产品", "已选择", "未选择"]} />
         </div>
       </section>
@@ -415,7 +482,9 @@ function ProductsStep({
               <article key={product.id} className="rounded-lg border border-[#F0DFAD] bg-white p-4 shadow-sm sm:p-5">
                 <div className="flex flex-wrap gap-2 text-xs">
                   <span className="rounded-full bg-[#FFF7D6] px-3 py-1 text-[#7A5A00]">机构：{product.institution}</span>
-                  <span className="rounded-full bg-[#F5F6F8] px-3 py-1 text-[#4B5563]">赛道：{product.track}</span>
+                  {displayProductTrack(product.track) ? (
+                    <span className="rounded-full bg-[#F5F6F8] px-3 py-1 text-[#4B5563]">赛道：{displayProductTrack(product.track)}</span>
+                  ) : null}
                 </div>
                 <h3 className="mt-3 text-base font-semibold leading-7 sm:text-lg">{product.productName}</h3>
                 <p className="mt-1 font-mono text-sm text-[#6B7280]">{product.productCode}</p>
@@ -443,15 +512,15 @@ function ProductsStep({
           <div className="flex items-center justify-between gap-3">
             <h2 className="text-lg font-semibold">已选产品</h2>
             <span className="rounded-full bg-[#FFF7D6] px-3 py-1 text-xs font-semibold text-[#8A6400]">
-              {draft.items.length} / 10
+              {draft.items.length} / {surveySelectionLimits.max}
             </span>
           </div>
-          <p className="mt-2 text-sm leading-6 text-[#6B7280]">你可以先把感兴趣的产品加入这里，下一步再填写意向等级和排序。</p>
+          <p className="mt-2 text-sm leading-6 text-[#6B7280]">你可以先把感兴趣的产品加入这里，下一步再确认 Top 5 意向排序。</p>
           <div className="mt-4 max-h-72 space-y-3 overflow-y-auto pr-1 lg:max-h-none">
             {selectedProducts.map((product) => (
               <div key={product.id} className="rounded-lg border border-[#F0DFAD] p-3">
                 <p className="text-sm font-semibold">{product.productName}</p>
-                <p className="mt-1 text-xs text-[#6B7280]">{product.institution} / {product.track} / {product.productCode}</p>
+                <p className="mt-1 text-xs text-[#6B7280]">{formatProductMeta(product)}</p>
                 <button onClick={() => toggleProduct(product.id)} className="mt-2 text-xs text-[#B88700]">移除</button>
               </div>
             ))}
@@ -460,14 +529,11 @@ function ProductsStep({
           <div className="mt-5 grid grid-cols-2 gap-2">
             <button onClick={() => go("/survey")} className="rounded-lg border border-[#E9DDB8] px-4 py-3 text-sm">上一步</button>
             <button
-              disabled={draft.items.length < 3}
-              onClick={() => {
-                if (draft.items.length < 3) return setMessage("请至少选择 3 个你相对看好的产品，方便我们做后续统计。");
-                go("/survey/review");
-              }}
+              disabled={!canContinue}
+              onClick={continueToReview}
               className="rounded-lg bg-[#1F2937] px-4 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40"
             >
-              下一步，确认意向
+              下一步，排序前 5 名
             </button>
           </div>
         </aside>
@@ -495,15 +561,6 @@ function ReviewStep({
 }) {
   const [submitting, setSubmitting] = useState(false);
 
-  function updateItem(productId: string, patch: Partial<DraftItem>) {
-    setDraft({
-      ...draft,
-      items: draft.items.map((item) =>
-        item.productId === productId ? { ...item, ...patch } : item,
-      ),
-    });
-  }
-
   function setRank(productId: string, rankType: RankType) {
     setDraft({
       ...draft,
@@ -521,9 +578,7 @@ function ReviewStep({
     const missingTop = ["top1", "top2", "top3", "top4", "top5"].some(
       (rank) => draft.items.filter((item) => item.rankType === rank).length !== 1,
     );
-    if (draft.items.some((item) => !item.interestLevel)) return setMessage("所有已选产品必须选择意向等级");
     if (missingTop) return setMessage("必须设置第 1 到第 5 意向");
-    if (draft.items.some((item) => item.contentFormats.length === 0)) return setMessage("内容形式至少选择 1 个");
     if (!draft.confirmations.confirmedIntentOnly || !draft.confirmations.confirmedCompliance || !draft.confirmations.confirmedFinalCommunication) {
       return setMessage("三个合规确认必须全部勾选");
     }
@@ -547,22 +602,21 @@ function ReviewStep({
   return (
     <BaseLayout title="确认你的产品意向">
       <section className="rounded-lg border border-[#F0DFAD] bg-white p-4 shadow-sm sm:p-5">
-        <p className="text-sm leading-7 text-[#4B5563]">请为已选产品补充意向等级、内容形式和排序。这部分信息只用于内部意向统计。</p>
+        <p className="text-sm leading-7 text-[#4B5563]">请为已选产品设置意向排序。这部分信息只用于内部意向统计。</p>
         <p className="mt-3 rounded-lg bg-[#FFF7D6] p-4 text-sm text-[#5F4A12]">请至少设置 Top 5 产品。Top 5 代表你当前最愿意优先了解或沟通的方向。</p>
       </section>
       <section className="space-y-4">
+        {selectedProducts.length === 0 ? (
+          <div className="rounded-lg border border-[#F0DFAD] bg-white p-4 text-sm leading-7 text-[#6B7280] shadow-sm sm:p-5">
+            还没有可排序的产品，请返回上一步重新选择。
+          </div>
+        ) : null}
         {selectedProducts.map(({ product, item }) => (
           <article key={product.id} className="rounded-lg border border-[#F0DFAD] bg-white p-4 shadow-sm sm:p-5">
             <h2 className="text-base font-semibold leading-7 sm:text-lg">{product.productName}</h2>
-            <p className="mt-1 text-sm text-[#6B7280]">{product.institution} / {product.track} / {product.productCode}</p>
+            <p className="mt-1 text-sm text-[#6B7280]">{formatProductMeta(product)}</p>
             <p className="mt-3 text-sm leading-7 text-[#4B5563]">产品说明：{displayProductDescription(product.productDescription)}</p>
-            <div className="mt-5 grid gap-5 lg:grid-cols-2">
-              <OptionGroup
-                title="你的意向等级 *"
-                options={Object.entries(interestLevelLabels)}
-                value={item.interestLevel}
-                onChange={(value) => updateItem(product.id, { interestLevel: value as InterestLevel })}
-              />
+            <div className="mt-5">
               <OptionGroup
                 title="意向排序 *"
                 options={Object.entries(rankTypeLabels)}
@@ -570,42 +624,40 @@ function ReviewStep({
                 onChange={(value) => setRank(product.id, value as RankType)}
               />
             </div>
-            <label className="mt-5 block space-y-2">
-              <span className="text-sm font-semibold">你为什么对这个产品感兴趣</span>
-              <textarea
-                maxLength={100}
-                value={item.personalReason}
-                onChange={(event) => updateItem(product.id, { personalReason: event.target.value })}
-                placeholder="比如契合你的受众、近期市场关注度高、适合做科普、适合做社区讨论等"
-                className="min-h-24 w-full rounded-lg border border-[#E9DDB8] p-3 text-sm"
-              />
-            </label>
-            <div className="mt-5">
-              <MultiField
-                label="你更适合用什么内容形式做这个产品 *"
-                options={Object.values(contentFormatLabels)}
-                values={item.contentFormats.map((value) => contentFormatLabels[value])}
-                onChange={(labels) => {
-                  const formats = Object.entries(contentFormatLabels)
-                    .filter(([, label]) => labels.includes(label))
-                    .map(([value]) => value as ContentFormat);
-                  updateItem(product.id, { contentFormats: formats });
-                }}
-              />
-            </div>
-            <label className="mt-5 block space-y-2">
-              <span className="text-sm font-semibold">补充备注</span>
-              <textarea
-                value={item.remark}
-                onChange={(event) => updateItem(product.id, { remark: event.target.value })}
-                placeholder="比如希望补充哪些资料、是否需要更多市场观点、是否需要更清晰的产品信息等"
-                className="min-h-20 w-full rounded-lg border border-[#E9DDB8] p-3 text-sm"
-              />
-            </label>
           </article>
         ))}
       </section>
       <section className="rounded-lg border border-[#F0DFAD] bg-white p-4 shadow-sm sm:p-5">
+        <label className="block space-y-2">
+          <span className="text-sm font-semibold">补充备注</span>
+          <textarea
+            value={draft.overallRemark}
+            onChange={(event) => setDraft({ ...draft, overallRemark: event.target.value })}
+            placeholder="比如希望补充哪些资料、是否需要更多市场观点、是否需要更清晰的产品信息等"
+            className="min-h-24 w-full rounded-lg border border-[#E9DDB8] p-3 text-sm"
+          />
+        </label>
+      </section>
+      <section className="rounded-lg border border-[#F0DFAD] bg-white p-4 shadow-sm sm:p-5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h2 className="text-base font-semibold">提交前确认</h2>
+          <button
+            type="button"
+            onClick={() =>
+              setDraft({
+                ...draft,
+                confirmations: {
+                  confirmedIntentOnly: true,
+                  confirmedCompliance: true,
+                  confirmedFinalCommunication: true,
+                },
+              })
+            }
+            className="rounded-full border border-[#B88700] px-4 py-2 text-sm font-semibold text-[#8A6400]"
+          >
+            一键全选
+          </button>
+        </div>
         {[
           ["confirmedIntentOnly", "我确认本次填写仅代表意向选择，不构成投资建议。"],
           ["confirmedCompliance", "我理解后续正式内容需要经过合规审核，不使用保本、稳赚、确定收益、一定上涨等不合规表达。"],
@@ -692,8 +744,7 @@ function SuccessStep({
             <div key={product.id} className="rounded-lg border border-[#F0DFAD] p-4">
               <p className="text-sm text-[#B88700]">{formatRankType(item.rankType)}</p>
               <h3 className="mt-1 font-semibold">{product.productName}</h3>
-              <p className="mt-1 text-sm text-[#6B7280]">{product.institution} / {product.track} / {product.productCode}</p>
-              <p className="mt-2 text-sm">{formatInterestLevel(item.interestLevel as InterestLevel)} / {formatContentFormats(item.contentFormats)}</p>
+              <p className="mt-1 text-sm text-[#6B7280]">{formatProductMeta(product)}</p>
             </div>
           ))}
         </div>

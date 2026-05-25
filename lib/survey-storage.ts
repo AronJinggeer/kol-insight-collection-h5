@@ -10,6 +10,10 @@ import {
   mapFeishuMatrixRows,
   refreshFeishuUserAccessToken,
 } from "@/lib/feishu-auth";
+import {
+  deriveInterestLevelFromRank,
+  surveySelectionLimits,
+} from "./survey-options.ts";
 import type {
   Product,
   KOL,
@@ -335,10 +339,26 @@ function parseSurveyBundleFromRawPayload(rawPayload: unknown) {
     ) {
       return null;
     }
-    return parsed.bundle;
+    return normalizeSurveyResponseBundle(parsed.bundle);
   } catch {
     return null;
   }
+}
+
+function normalizeSurveyResponseBundle(bundle: SurveyResponseBundle): SurveyResponseBundle {
+  return {
+    ...bundle,
+    response: {
+      ...bundle.response,
+      overallRemark: bundle.response.overallRemark ?? "",
+    },
+    items: bundle.items.map((item) => ({
+      ...item,
+      personalReason: item.personalReason ?? "",
+      contentFormats: item.contentFormats ?? [],
+      remark: item.remark ?? "",
+    })),
+  };
 }
 
 function buildFeishuSurveyBatchCreateBody(bundle: SurveyResponseBundle) {
@@ -367,10 +387,7 @@ function buildFeishuSurveyBatchCreateBody(bundle: SurveyResponseBundle) {
         bundle.kol.platforms.join("，"),
         "5-6月行情调研",
         bundle.items.map((item) => item.productId).join("，"),
-        bundle.items
-          .map((item) => item.personalReason)
-          .filter(Boolean)
-          .join("，"),
+        bundle.response.overallRemark,
         serializeSurveyBundle(bundle),
       ],
     ],
@@ -503,12 +520,17 @@ async function ensureSurveyTables() {
           kol_id text not null references survey_kols(id) on delete cascade,
           status text not null,
           submitted_at timestamptz not null,
+          overall_remark text not null default '',
           confirmed_intent_only boolean not null,
           confirmed_compliance boolean not null,
           confirmed_final_communication boolean not null,
           created_at timestamptz not null,
           updated_at timestamptz not null
         )
+      `;
+      await sql`
+        alter table survey_responses
+        add column if not exists overall_remark text not null default ''
       `;
       await sql`
         create table if not exists survey_response_items (
@@ -580,6 +602,7 @@ async function insertSurveyBundle(
         kol_id,
         status,
         submitted_at,
+        overall_remark,
         confirmed_intent_only,
         confirmed_compliance,
         confirmed_final_communication,
@@ -590,6 +613,7 @@ async function insertSurveyBundle(
         ${bundle.response.kolId},
         ${bundle.response.status},
         ${bundle.response.submittedAt},
+        ${bundle.response.overallRemark},
         ${bundle.response.confirmedIntentOnly},
         ${bundle.response.confirmedCompliance},
         ${bundle.response.confirmedFinalCommunication},
@@ -694,6 +718,7 @@ export async function getSurveyResponseBundles() {
         kol_id: string;
         status: "submitted";
         submitted_at: Date;
+        overall_remark: string;
         confirmed_intent_only: boolean;
         confirmed_compliance: boolean;
         confirmed_final_communication: boolean;
@@ -705,6 +730,7 @@ export async function getSurveyResponseBundles() {
           kol_id,
           status,
           submitted_at,
+          overall_remark,
           confirmed_intent_only,
           confirmed_compliance,
           confirmed_final_communication,
@@ -782,6 +808,7 @@ export async function getSurveyResponseBundles() {
           kolId: row.kol_id,
           status: "submitted",
           submittedAt: toIsoString(row.submitted_at),
+          overallRemark: row.overall_remark ?? "",
           confirmedIntentOnly: row.confirmed_intent_only,
           confirmedCompliance: row.confirmed_compliance,
           confirmedFinalCommunication: row.confirmed_final_communication,
@@ -800,7 +827,9 @@ export async function getSurveyResponseBundles() {
   }
 
   const bundles = await readJsonFile<SurveyResponseBundle[]>(RESPONSES_FILE, []);
-  return bundles.sort((a, b) => b.response.submittedAt.localeCompare(a.response.submittedAt));
+  return bundles
+    .map(normalizeSurveyResponseBundle)
+    .sort((a, b) => b.response.submittedAt.localeCompare(a.response.submittedAt));
 }
 
 export async function getSurveyBundleByKolId(kolId: string) {
@@ -814,12 +843,10 @@ export function validateSurveySubmitPayload(payload: SurveySubmitPayload) {
   if (!payload.kol?.platforms?.length) errors.push("主要平台至少选择 1 个");
   if (!payload.kol?.followerRange) errors.push("粉丝量区间必填");
   if (!payload.kol?.contentDirections?.length) errors.push("擅长内容方向至少选择 1 个");
-  if (payload.items.length < 3) errors.push("请至少选择 3 个你相对看好的产品");
-  if (payload.items.length > 10) errors.push("最多选择 10 个产品");
+  if (payload.items.length < surveySelectionLimits.min) errors.push("请至少选择 3 个你相对看好的产品");
+  if (payload.items.length > surveySelectionLimits.max) errors.push("最多选择 8 个产品");
   for (const item of payload.items) {
-    if (!item.interestLevel) errors.push("所有已选产品必须选择意向等级");
     if (!item.rankType) errors.push("所有已选产品必须选择意向排序");
-    if (!item.contentFormats?.length) errors.push("内容形式至少选择 1 个");
   }
   for (const rank of ["top1", "top2", "top3", "top4", "top5"]) {
     const count = payload.items.filter((item) => item.rankType === rank).length;
@@ -859,6 +886,7 @@ export async function appendSurveyResponse(payload: SurveySubmitPayload) {
       kolId,
       status: "submitted",
       submittedAt: now,
+      overallRemark: (payload.overallRemark ?? "").trim(),
       confirmedIntentOnly: payload.confirmations.confirmedIntentOnly,
       confirmedCompliance: payload.confirmations.confirmedCompliance,
       confirmedFinalCommunication: payload.confirmations.confirmedFinalCommunication,
@@ -869,10 +897,10 @@ export async function appendSurveyResponse(payload: SurveySubmitPayload) {
       id: createId("item"),
       responseId,
       productId: item.productId,
-      interestLevel: item.interestLevel,
+      interestLevel: item.interestLevel ?? deriveInterestLevelFromRank(item.rankType),
       rankType: item.rankType,
       personalReason: (item.personalReason ?? "").slice(0, 100),
-      contentFormats: item.contentFormats,
+      contentFormats: item.contentFormats ?? [],
       remark: item.remark ?? "",
       createdAt: now,
       updatedAt: now,

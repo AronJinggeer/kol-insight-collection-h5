@@ -55,6 +55,7 @@ const bundles: SurveyResponseBundle[] = [
       kolId: "k1",
       status: "submitted",
       submittedAt: "2026-05-25T01:05:00.000Z",
+      overallRemark: "",
       confirmedIntentOnly: true,
       confirmedCompliance: true,
       confirmedFinalCommunication: true,

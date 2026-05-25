@@ -46,6 +46,7 @@ export type SurveyResponse = {
   kolId: string;
   status: "submitted";
   submittedAt: string;
+  overallRemark: string;
   confirmedIntentOnly: boolean;
   confirmedCompliance: boolean;
   confirmedFinalCommunication: boolean;
@@ -84,12 +85,13 @@ export type SurveySubmitPayload = {
     confirmedCompliance: boolean;
     confirmedFinalCommunication: boolean;
   };
+  overallRemark?: string;
   items: Array<{
     productId: string;
-    interestLevel: InterestLevel;
+    interestLevel?: InterestLevel;
     rankType: RankType;
     personalReason?: string;
-    contentFormats: ContentFormat[];
+    contentFormats?: ContentFormat[];
     remark?: string;
   }>;
 };

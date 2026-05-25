@@ -53,7 +53,7 @@ async function main() {
       id,
       sourceRow,
       institution,
-      track: text(row["赛道"]) || "未填写",
+      track: text(row["赛道"]),
       productName,
       productCode,
       productDescription: text(row["推荐理由（50字以内）"]),

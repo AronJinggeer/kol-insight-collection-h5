@@ -2,8 +2,6 @@ import { createRequire } from "module";
 import {
   buildSurveyAnalytics,
   displayProductDescription,
-  formatContentFormats,
-  formatInterestLevel,
   formatRankType,
 } from "./survey-stats.ts";
 import type { Product, SurveyResponseBundle } from "./survey-types.ts";
@@ -52,10 +50,6 @@ export function buildSurveyExportWorkbook(
     产品代码: stat.product.productCode,
     产品说明: displayProductDescription(stat.product.productDescription),
     总选择人数: stat.totalSelections,
-    强意向人数: stat.strongCount,
-    中意向人数: stat.mediumCount,
-    弱意向人数: stat.weakCount,
-    需要更多资料人数: stat.needMoreInfoCount,
     Top1人数: stat.top1Count,
     Top2人数: stat.top2Count,
     Top3人数: stat.top3Count,
@@ -68,7 +62,7 @@ export function buildSurveyExportWorkbook(
     意向达人汇总: stat.selections
       .map(
         (selection) =>
-          `${selection.kol.name}（${formatInterestLevel(selection.item.interestLevel)} / ${formatRankType(selection.item.rankType)} / ${formatContentFormats(selection.item.contentFormats)}）`,
+          `${selection.kol.name}（${formatRankType(selection.item.rankType)}）`,
       )
       .join("\n"),
   }));
@@ -84,10 +78,7 @@ export function buildSurveyExportWorkbook(
     Top3产品: summary.topProducts.top3?.productName ?? "",
     Top4产品: summary.topProducts.top4?.productName ?? "",
     Top5产品: summary.topProducts.top5?.productName ?? "",
-    强意向产品数: summary.strongCount,
-    中意向产品数: summary.mediumCount,
-    弱意向产品数: summary.weakCount,
-    需要更多资料产品数: summary.needMoreInfoCount,
+    补充备注: summary.bundle.response.overallRemark,
     提交时间: formatTime(summary.bundle.response.submittedAt),
   }));
 
@@ -104,11 +95,8 @@ export function buildSurveyExportWorkbook(
         产品名称: product?.productName ?? "",
         产品代码: product?.productCode ?? "",
         产品说明: displayProductDescription(product?.productDescription ?? ""),
-        意向等级: formatInterestLevel(item.interestLevel),
         意向排序: formatRankType(item.rankType),
-        内容形式: formatContentFormats(item.contentFormats),
-        感兴趣原因: item.personalReason,
-        补充备注: item.remark,
+        补充备注: bundle.response.overallRemark,
         提交时间: formatTime(bundle.response.submittedAt),
       };
     }),
@@ -125,9 +113,7 @@ export function buildSurveyExportWorkbook(
     };
     for (const bundle of bundles) {
       const item = bundle.items.find((candidate) => candidate.productId === product.id);
-      row[bundle.kol.name] = item
-        ? `${formatInterestLevel(item.interestLevel)} / ${formatRankType(item.rankType)} / ${formatContentFormats(item.contentFormats)}`
-        : "";
+      row[bundle.kol.name] = item ? formatRankType(item.rankType) : "";
     }
     return row;
   });
@@ -138,7 +124,6 @@ export function buildSurveyExportWorkbook(
     被选择产品数: row.selectedProductCount,
     未被选择产品数: row.unselectedProductCount,
     总选择次数: row.totalSelections,
-    强意向次数: row.strongCount,
     Top5入选次数: row.top5Count,
     意向总分: row.interestScore,
     平均分: row.averageScore,
@@ -152,7 +137,6 @@ export function buildSurveyExportWorkbook(
     被选择产品数: row.selectedProductCount,
     未被选择产品数: row.unselectedProductCount,
     总选择次数: row.totalSelections,
-    强意向次数: row.strongCount,
     Top5入选次数: row.top5Count,
     意向总分: row.interestScore,
     平均分: row.averageScore,
