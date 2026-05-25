@@ -6,6 +6,8 @@ import { useRouter } from "next/navigation";
 import {
   contentDirectionOptions,
   followerRangeOptions,
+  getAvailableRankTypes,
+  getRequiredRankTypes,
   institutionFilterOptions,
   platformOptions,
   rankTypeLabels,
@@ -419,7 +421,7 @@ function ProductsStep({
 
   function continueToReview() {
     if (draft.items.length < surveySelectionLimits.min) {
-      setMessage("请至少选择 3 个你相对看好的产品，方便我们做后续统计。");
+      setMessage("请至少选择 1 个你相对看好的产品，方便我们做后续统计。");
       return;
     }
     if (draft.items.length > surveySelectionLimits.max) {
@@ -448,11 +450,11 @@ function ProductsStep({
     <BaseLayout title="选择你近期更看好的产品">
       <section className="rounded-lg border border-[#F0DFAD] bg-white p-4 shadow-sm sm:p-5">
         <p className="text-sm leading-7 text-[#4B5563]">
-          请从下面的产品池中，选择你认为更适合自己内容方向、粉丝受众和近期市场环境的产品。建议选择 3 到 8 个产品。如果你对某个产品感兴趣，但还需要更多资料，也可以先加入意向。
+          请从下面的产品池中，选择你认为更适合自己内容方向、粉丝受众和近期市场环境的产品。建议选择 1 到 8 个产品。如果你对某个产品感兴趣，但还需要更多资料，也可以先加入意向。
         </p>
         <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg bg-[#FFF7D6] px-4 py-3 text-sm text-[#5F4A12]">
           <span>已选择 {draft.items.length} / {surveySelectionLimits.max}</span>
-          <span>至少选择 3 个产品后可进入下一步</span>
+          <span>至少选择 1 个产品后可进入下一步</span>
           <button
             type="button"
             disabled={!canContinue}
@@ -560,14 +562,28 @@ function ReviewStep({
   go: (path: string) => void;
 }) {
   const [submitting, setSubmitting] = useState(false);
+  const requiredRankTypes = getRequiredRankTypes(draft.items.length);
+  const availableRankTypes = getAvailableRankTypes(draft.items.length);
+  const rankOptions = availableRankTypes.map(
+    (rankType) => [rankType, rankTypeLabels[rankType]] as [RankType, string],
+  );
+  const rankHint =
+    draft.items.length === 0
+      ? "还没有可排序的产品，请返回上一步重新选择。"
+      : draft.items.length > requiredRankTypes.length
+      ? "请设置 Top 5 产品，其他产品可保留为备选。Top 5 代表你当前最愿意优先了解或沟通的方向。"
+      : `已选 ${draft.items.length} 个产品，请设置第 1 到第 ${draft.items.length} 意向。`;
 
   function setRank(productId: string, rankType: RankType) {
+    const currentItem = draft.items.find((item) => item.productId === productId);
+    const swappedRank = currentItem?.rankType ?? "backup";
+    const canUseBackup = availableRankTypes.includes("backup");
     setDraft({
       ...draft,
       items: draft.items.map((item) => {
         if (item.productId === productId) return { ...item, rankType };
         if (rankType !== "backup" && item.rankType === rankType) {
-          return { ...item, rankType: "backup" };
+          return { ...item, rankType: canUseBackup ? "backup" : swappedRank };
         }
         return item;
       }),
@@ -575,10 +591,13 @@ function ReviewStep({
   }
 
   async function submit() {
-    const missingTop = ["top1", "top2", "top3", "top4", "top5"].some(
+    const missingRequiredRank = requiredRankTypes.some(
       (rank) => draft.items.filter((item) => item.rankType === rank).length !== 1,
     );
-    if (missingTop) return setMessage("必须设置第 1 到第 5 意向");
+    if (missingRequiredRank) {
+      const lastRankNumber = requiredRankTypes.length;
+      return setMessage(`必须设置第 1 到第 ${lastRankNumber} 意向，且每个排序只能选一个`);
+    }
     if (!draft.confirmations.confirmedIntentOnly || !draft.confirmations.confirmedCompliance || !draft.confirmations.confirmedFinalCommunication) {
       return setMessage("三个合规确认必须全部勾选");
     }
@@ -603,7 +622,7 @@ function ReviewStep({
     <BaseLayout title="确认你的产品意向">
       <section className="rounded-lg border border-[#F0DFAD] bg-white p-4 shadow-sm sm:p-5">
         <p className="text-sm leading-7 text-[#4B5563]">请为已选产品设置意向排序。这部分信息只用于内部意向统计。</p>
-        <p className="mt-3 rounded-lg bg-[#FFF7D6] p-4 text-sm text-[#5F4A12]">请至少设置 Top 5 产品。Top 5 代表你当前最愿意优先了解或沟通的方向。</p>
+        <p className="mt-3 rounded-lg bg-[#FFF7D6] p-4 text-sm text-[#5F4A12]">{rankHint}</p>
       </section>
       <section className="space-y-4">
         {selectedProducts.length === 0 ? (
@@ -619,7 +638,7 @@ function ReviewStep({
             <div className="mt-5">
               <OptionGroup
                 title="意向排序 *"
-                options={Object.entries(rankTypeLabels)}
+                options={rankOptions}
                 value={item.rankType}
                 onChange={(value) => setRank(product.id, value as RankType)}
               />

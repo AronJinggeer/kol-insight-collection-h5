@@ -102,9 +102,18 @@ export const rankTypeScore: Record<RankType, number> = {
 
 export const topRankTypes: RankType[] = ["top1", "top2", "top3", "top4", "top5"];
 export const surveySelectionLimits = {
-  min: 3,
+  min: 1,
   max: 8,
 } as const;
+
+export function getRequiredRankTypes(selectionCount: number) {
+  return topRankTypes.slice(0, Math.min(selectionCount, topRankTypes.length));
+}
+
+export function getAvailableRankTypes(selectionCount: number): RankType[] {
+  const requiredRanks = getRequiredRankTypes(selectionCount);
+  return selectionCount > topRankTypes.length ? [...requiredRanks, "backup"] : requiredRanks;
+}
 
 export function deriveInterestLevelFromRank(rankType: RankType): InterestLevel {
   if (rankType === "top1" || rankType === "top2") return "strong";

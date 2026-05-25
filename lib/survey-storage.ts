@@ -12,6 +12,7 @@ import {
 } from "@/lib/feishu-auth";
 import {
   deriveInterestLevelFromRank,
+  getRequiredRankTypes,
   surveySelectionLimits,
 } from "./survey-options.ts";
 import type {
@@ -843,14 +844,17 @@ export function validateSurveySubmitPayload(payload: SurveySubmitPayload) {
   if (!payload.kol?.platforms?.length) errors.push("主要平台至少选择 1 个");
   if (!payload.kol?.followerRange) errors.push("粉丝量区间必填");
   if (!payload.kol?.contentDirections?.length) errors.push("擅长内容方向至少选择 1 个");
-  if (payload.items.length < surveySelectionLimits.min) errors.push("请至少选择 3 个你相对看好的产品");
+  if (payload.items.length < surveySelectionLimits.min) errors.push("请至少选择 1 个你相对看好的产品");
   if (payload.items.length > surveySelectionLimits.max) errors.push("最多选择 8 个产品");
   for (const item of payload.items) {
     if (!item.rankType) errors.push("所有已选产品必须选择意向排序");
   }
-  for (const rank of ["top1", "top2", "top3", "top4", "top5"]) {
+  const requiredRankTypes = getRequiredRankTypes(payload.items.length);
+  for (const rank of requiredRankTypes) {
     const count = payload.items.filter((item) => item.rankType === rank).length;
-    if (count !== 1) errors.push("必须设置第 1 到第 5 意向，且每个 Top 排序只能选一个");
+    if (count !== 1) {
+      errors.push(`必须设置第 1 到第 ${requiredRankTypes.length} 意向，且每个排序只能选一个`);
+    }
   }
   if (
     !payload.confirmations?.confirmedIntentOnly ||
