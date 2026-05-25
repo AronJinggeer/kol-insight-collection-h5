@@ -272,14 +272,69 @@ function serializeSurveyBundle(bundle: SurveyResponseBundle) {
   });
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === "string");
+}
+
+function isSurveyResponseBundle(value: unknown): value is SurveyResponseBundle {
+  if (!isRecord(value)) return false;
+
+  const kol = value.kol;
+  const response = value.response;
+  const items = value.items;
+  if (!isRecord(kol) || !isRecord(response) || !Array.isArray(items)) {
+    return false;
+  }
+
+  if (
+    typeof kol.id !== "string" ||
+    typeof kol.name !== "string" ||
+    !isStringArray(kol.platforms) ||
+    typeof kol.followerRange !== "string" ||
+    !isStringArray(kol.contentDirections)
+  ) {
+    return false;
+  }
+
+  if (
+    typeof response.id !== "string" ||
+    typeof response.kolId !== "string" ||
+    response.status !== "submitted" ||
+    typeof response.submittedAt !== "string"
+  ) {
+    return false;
+  }
+
+  return items.every((item) => {
+    if (!isRecord(item)) return false;
+    return (
+      typeof item.id === "string" &&
+      typeof item.responseId === "string" &&
+      typeof item.productId === "string" &&
+      typeof item.interestLevel === "string" &&
+      typeof item.rankType === "string" &&
+      isStringArray(item.contentFormats)
+    );
+  });
+}
+
 function parseSurveyBundleFromRawPayload(rawPayload: unknown) {
   if (typeof rawPayload !== "string" || !rawPayload.trim()) return null;
   try {
     const parsed = JSON.parse(rawPayload) as {
       surveySchemaVersion?: number;
-      bundle?: SurveyResponseBundle;
+      bundle?: unknown;
     };
-    if (parsed.surveySchemaVersion !== 1 || !parsed.bundle) return null;
+    if (
+      parsed.surveySchemaVersion !== 1 ||
+      !isSurveyResponseBundle(parsed.bundle)
+    ) {
+      return null;
+    }
     return parsed.bundle;
   } catch {
     return null;
